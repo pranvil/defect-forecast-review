@@ -91,5 +91,40 @@ export const projectServiceMock: ProjectService = {
     cachedProjects = Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name))
     persistCache(cachedProjects)
   },
+  async deleteCachedProject(projectName: string) {
+    await delay(60)
+    cachedProjects = cachedProjects.filter((x) => x.name !== projectName)
+    persistCache(cachedProjects)
+  },
+  async getProjectCompare(projectName) {
+    await delay(80)
+    const history = getProjectHistory(projectName)
+    const weekly = history.weekly.map((w) => ({
+      weekLabel: w.weekLabel,
+      historyCreated: w.created,
+      historyFixed: w.fixed,
+      jiraCreated: Math.max(0, w.created - 3),
+      jiraFixed: Math.max(0, w.fixed - 2),
+      forecastCreated: Math.max(0, w.created + 4),
+      forecastFixed: Math.max(0, w.fixed + 1),
+      backlogHistory: w.backlog,
+      backlogJira: Math.max(0, w.backlog - 8),
+      backlogForecast: w.backlog + 12,
+    }))
+    const totalHistoryCreated = weekly.reduce((s, r) => s + r.historyCreated, 0)
+    const totalJiraCreated = weekly.reduce((s, r) => s + r.jiraCreated, 0)
+    const totalForecastCreated = weekly.reduce((s, r) => s + r.forecastCreated, 0)
+    return {
+      projectName,
+      metrics: {
+        totalHistoryCreated,
+        totalJiraCreated,
+        totalForecastCreated,
+        jiraVsForecastGap: totalJiraCreated - totalForecastCreated,
+        historyVsForecastGap: totalHistoryCreated - totalForecastCreated,
+      },
+      weekly,
+    }
+  },
 }
 

@@ -1,8 +1,9 @@
 import type { ExportService } from '@/services/exportService'
+import { API_BASE } from '@/services/http'
 
 export const exportServiceMock: ExportService = {
   async exportForecastToExcel(req) {
-    const res = await fetch('http://127.0.0.1:8000/api/export/forecast-xlsx', {
+    const res = await fetch(`${API_BASE}/api/export/forecast-xlsx`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),

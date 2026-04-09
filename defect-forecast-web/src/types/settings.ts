@@ -6,3 +6,14 @@ export interface FieldMapping {
   exampleValue: string
   enabled: boolean
 }
+
+export type JiraAuthType = 'pat' | 'basic'
+
+export interface JiraConnectionConfig {
+  baseUrl: string
+  authType: JiraAuthType
+  username: string
+  token: string
+  verifySsl: boolean
+  timeoutSec: number
+}

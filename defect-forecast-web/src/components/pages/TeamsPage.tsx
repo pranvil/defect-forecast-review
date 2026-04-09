@@ -37,8 +37,10 @@ import type { TeamKind } from '@/types/team'
 
 export function TeamsPage() {
   const teams = useTeamStore((s) => s.teams)
+  const hydrateFromServer = useTeamStore((s) => s.hydrateFromServer)
   const addTeam = useTeamStore((s) => s.addTeam)
   const removeTeam = useTeamStore((s) => s.removeTeam)
+  const setTeams = useTeamStore((s) => s.setTeams)
   const testingTeams = teams.filter((x) => x.type === 'testing')
   const devTeams = teams.filter((x) => x.type === 'development')
 
@@ -46,6 +48,13 @@ export function TeamsPage() {
   const [addKind, setAddKind] = React.useState<TeamKind>('testing')
   const [name, setName] = React.useState('')
   const [note, setNote] = React.useState('')
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null)
+
+  React.useEffect(() => {
+    void hydrateFromServer().catch((e: unknown) => {
+      toast('团队配置加载失败', { description: e instanceof Error ? e.message : '服务不可用' })
+    })
+  }, [hydrateFromServer])
 
   return (
     <div className="space-y-6">
@@ -183,7 +192,7 @@ export function TeamsPage() {
             type="button"
             variant="outline"
             className="rounded-2xl"
-            onClick={() => toast('本轮未实现', { description: '团队导入功能 Coming soon' })}
+            onClick={() => fileInputRef.current?.click()}
           >
             导入团队
           </Button>
@@ -191,10 +200,61 @@ export function TeamsPage() {
             type="button"
             variant="outline"
             className="rounded-2xl"
-            onClick={() => toast('本轮未实现', { description: '团队导出功能 Coming soon' })}
+            onClick={() => {
+              const payload = JSON.stringify(teams, null, 2)
+              const blob = new Blob([payload], { type: 'application/json;charset=utf-8' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `teams.${new Date().toISOString().slice(0, 10)}.json`
+              document.body.appendChild(a)
+              a.click()
+              a.remove()
+              URL.revokeObjectURL(url)
+              toast('已导出', { description: `共 ${teams.length} 个团队` })
+            }}
           >
             导出团队配置
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (!file) return
+              void file
+                .text()
+                .then((text) => {
+                  const parsed = JSON.parse(text) as unknown
+                  if (!Array.isArray(parsed)) {
+                    toast('导入失败', { description: '文件格式错误' })
+                    return
+                  }
+                  const rows = parsed
+                    .map((x) => x as Partial<{ id: string; name: string; type: TeamKind; enabled: boolean; note: string }>)
+                    .filter((x) => typeof x.name === 'string' && (x.type === 'testing' || x.type === 'development'))
+                    .map((x) => ({
+                      id: typeof x.id === 'string' ? x.id : `t-import-${crypto.randomUUID()}`,
+                      name: x.name!,
+                      type: x.type!,
+                      enabled: typeof x.enabled === 'boolean' ? x.enabled : true,
+                      note: typeof x.note === 'string' ? x.note : '',
+                    }))
+                  if (!rows.length) {
+                    toast('导入失败', { description: '无有效团队数据' })
+                    return
+                  }
+                  setTeams(rows)
+                  toast('已导入', { description: `共 ${rows.length} 个团队` })
+                })
+                .catch((err: unknown) => {
+                  toast('导入失败', { description: err instanceof Error ? err.message : '解析失败' })
+                })
+              e.target.value = ''
+            }}
+          />
         </CardContent>
       </Card>
 

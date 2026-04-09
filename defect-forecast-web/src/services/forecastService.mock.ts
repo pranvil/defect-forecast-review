@@ -119,5 +119,31 @@ export const forecastServiceMock: ForecastService = {
       teamSummary,
     }
   },
+  async saveForecastVersion(req) {
+    await delay(80)
+    return {
+      id: `mock-${crypto.randomUUID()}`,
+      projectName: req.projectName,
+      cycle: `${req.input.params.startWeek}-${req.input.params.endWeek}`,
+      note: req.note ?? '',
+      createdAt: new Date().toISOString(),
+    }
+  },
+  async listForecastVersions(projectName) {
+    await delay(60)
+    if (!projectName) return []
+    return [
+      {
+        id: `mock-${projectName}`,
+        projectName,
+        cycle: '26W2-26W27',
+        note: 'mock version',
+        createdAt: new Date().toISOString(),
+      },
+    ]
+  },
+  async deleteForecastVersion() {
+    await delay(40)
+  },
 }
 

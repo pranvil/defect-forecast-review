@@ -45,6 +45,7 @@ import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
 
 export function ParamsPage() {
+  const hydrateDefaultsFromServer = useForecastStore((s) => s.hydrateDefaultsFromServer)
   const refProjects = useForecastStore((s) => s.refProjects)
   const removeRefProject = useForecastStore((s) => s.removeRefProject)
   const milestones = useForecastStore((s) => s.milestones)
@@ -57,12 +58,15 @@ export function ParamsPage() {
   const setParams = useForecastStore((s) => s.setParams)
   const setActiveSection = useProjectStore((s) => s.setActiveSection)
   const teams = useTeamStore((s) => s.teams)
+  const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
   const toggleTeamEnabled = useTeamStore((s) => s.toggleTeamEnabled)
 
   const testingTeams = teams.filter((x) => x.type === 'testing')
   const devTeams = teams.filter((x) => x.type === 'development')
 
   const [projectCycleByName, setProjectCycleByName] = React.useState<Record<string, string>>({})
+  const [allProjects, setAllProjects] = React.useState<string[]>([])
+  const milestoneFileInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -73,11 +77,21 @@ export function ParamsPage() {
         map[p.name] = p.cycle
       })
       setProjectCycleByName(map)
+      setAllProjects(rows.map((p) => p.name))
     })
     return () => {
       cancelled = true
     }
   }, [])
+
+  React.useEffect(() => {
+    void hydrateDefaultsFromServer().catch((e: unknown) => {
+      toast('预测默认参数加载失败', { description: e instanceof Error ? e.message : '服务不可用' })
+    })
+    void hydrateTeamsFromServer().catch((e: unknown) => {
+      toast('团队数据加载失败', { description: e instanceof Error ? e.message : '服务不可用' })
+    })
+  }, [hydrateDefaultsFromServer, hydrateTeamsFromServer])
 
   const [isAddRefOpen, setIsAddRefOpen] = React.useState(false)
   const [refDraft, setRefDraft] = React.useState<RefProjectRow>({
@@ -106,6 +120,29 @@ export function ParamsPage() {
     similarity: 75,
     source: '手工添加',
   })
+
+  const autoIdentifyRefProjects = () => {
+    const target = params.newProjectName.trim().toLowerCase()
+    const byScore = allProjects
+      .map((name) => {
+        const normalized = name.toLowerCase()
+        const overlap = normalized
+          .split(/\s+/)
+          .filter(Boolean)
+          .filter((token) => target.includes(token)).length
+        const base = overlap * 18 + (normalized[0] === target[0] ? 12 : 0)
+        const score = Math.max(40, Math.min(96, base + (name.length % 11)))
+        return { project: name, similarity: score, source: '系统识别' }
+      })
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 4)
+    if (!byScore.length) {
+      toast('暂无可识别项目', { description: '请先在历史项目中准备缓存项目' })
+      return
+    }
+    useForecastStore.getState().setRefProjects(byScore)
+    toast('已识别相似项目', { description: `已更新 ${byScore.length} 条参考项目` })
+  }
 
   return (
     <div className="space-y-6">
@@ -207,7 +244,7 @@ export function ParamsPage() {
               <Button
                 type="button"
                 className="w-full rounded-2xl"
-                onClick={() => toast('本轮未实现', { description: '自动识别相似项目 Coming soon' })}
+                onClick={autoIdentifyRefProjects}
               >
                 <Search className="mr-2 h-4 w-4" />
                 自动识别
@@ -350,10 +387,42 @@ export function ParamsPage() {
                 type="button"
                 variant="outline"
                 className="rounded-2xl"
-                onClick={() => toast('本轮未实现', { description: '批量导入节点 Coming soon（将支持 JSON/Excel）' })}
+                onClick={() => milestoneFileInputRef.current?.click()}
               >
                 批量导入节点
               </Button>
+              <input
+                ref={milestoneFileInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  void file.text().then((text) => {
+                    const parsed = JSON.parse(text) as unknown
+                    if (!Array.isArray(parsed)) return
+                    const rows = parsed
+                      .map((x) => x as Partial<MilestoneParam>)
+                      .filter((x) => typeof x.name === 'string' && typeof x.week === 'string')
+                      .map((x) => ({
+                        name: x.name!.trim(),
+                        week: x.week!.trim(),
+                        date: typeof x.date === 'string' && x.date ? x.date : firstDayDateOfWeek(x.week!.trim()),
+                      }))
+                      .filter((x) => x.name && x.week)
+                    if (!rows.length) {
+                      toast('导入失败', { description: '文件中没有有效节点' })
+                      return
+                    }
+                    useForecastStore.getState().setMilestones(rows)
+                    toast('已导入节点', { description: `共 ${rows.length} 条` })
+                  }).catch((err: unknown) => {
+                    toast('导入失败', { description: err instanceof Error ? err.message : '解析失败' })
+                  })
+                  e.target.value = ''
+                }}
+              />
               <Button
                 type="button"
                 variant="outline"

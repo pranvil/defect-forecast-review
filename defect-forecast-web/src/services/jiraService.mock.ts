@@ -11,7 +11,11 @@ function pseudoCountFromString(s: string): number {
 export const jiraServiceMock: JiraService = {
   async fetchByJql(req: JiraFetchRequest): Promise<JiraFetchResult> {
     await delay(450)
-    const fetched = pseudoCountFromString(`${req.projectKey}|${req.startWeek}|${req.endWeek}|${req.jql}`)
+    const source =
+      req.pullMode === 'jql'
+        ? req.jql
+        : `${req.projectKey}|${req.startDate}|${req.endDate}`
+    const fetched = pseudoCountFromString(`${req.projectKey}|${req.startWeek}|${req.endWeek}|${source}`)
     return {
       syncedAt: new Date().toISOString(),
       cycleLabel: `${req.startWeek} - ${req.endWeek}`,

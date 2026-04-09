@@ -40,12 +40,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { isReviewMode } from '@/runtime/mode'
+import { httpPost } from '@/services/http'
+import type { JiraAuthType } from '@/types/settings'
 
 export function ConfigPage() {
   const fieldMappings = useSettingsStore((s) => s.fieldMappings)
+  const hydrateFieldMappingsFromServer = useSettingsStore((s) => s.hydrateFieldMappingsFromServer)
   const addFieldMapping = useSettingsStore((s) => s.addFieldMapping)
   const updateFieldMapping = useSettingsStore((s) => s.updateFieldMapping)
   const removeFieldMapping = useSettingsStore((s) => s.removeFieldMapping)
+  const jiraConnection = useSettingsStore((s) => s.jiraConnection)
+  const setJiraConnection = useSettingsStore((s) => s.setJiraConnection)
 
   const fileInputRef = React.useRef<HTMLInputElement | null>(null)
   const [isDialogOpen, setIsDialogOpen] = React.useState(false)
@@ -57,6 +62,12 @@ export function ConfigPage() {
     exampleValue: '',
     enabled: true,
   })
+
+  React.useEffect(() => {
+    void hydrateFieldMappingsFromServer().catch((e: unknown) => {
+      toast('字段映射加载失败', { description: e instanceof Error ? e.message : '服务不可用' })
+    })
+  }, [hydrateFieldMappingsFromServer])
 
   const openCreate = () => {
     setEditingId(null)
@@ -152,11 +163,18 @@ export function ConfigPage() {
           <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
               <Label>Jira Base URL</Label>
-              <Input defaultValue="https://jira.company.com" />
+              <Input
+                value={jiraConnection.baseUrl}
+                onChange={(e) => setJiraConnection({ baseUrl: e.target.value })}
+                placeholder="https://your-jira.example.com"
+              />
             </div>
             <div className="space-y-2">
               <Label>认证方式</Label>
-              <Select defaultValue="pat">
+              <Select
+                value={jiraConnection.authType}
+                onValueChange={(v) => setJiraConnection({ authType: v as JiraAuthType })}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -168,21 +186,68 @@ export function ConfigPage() {
             </div>
             <div className="space-y-2">
               <Label>用户名</Label>
-              <Input defaultValue="hao.lin" />
+              <Input
+                value={jiraConnection.username}
+                onChange={(e) => setJiraConnection({ username: e.target.value })}
+                placeholder={jiraConnection.authType === 'basic' ? '邮箱或用户名' : 'PAT 模式可留空'}
+              />
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Token / 密码</Label>
-              <Input type="password" defaultValue="**************" />
+              <Input
+                type="password"
+                value={jiraConnection.token}
+                onChange={(e) => setJiraConnection({ token: e.target.value })}
+                placeholder="输入 PAT 或密码"
+              />
             </div>
             <div className="flex gap-3 md:col-span-2">
               <Button
                 type="button"
                 className="rounded-2xl"
-                onClick={() =>
-                  isReviewMode
-                    ? toast('评审版暂未开放', { description: '评审版不连接真实 Jira / 本机服务' })
-                    : toast('本轮未实现', { description: 'Jira 真实连通性测试 Coming soon' })
-                }
+                onClick={() => {
+                  if (isReviewMode) {
+                    toast('评审版暂未开放', { description: '评审版不连接真实 Jira / 本机服务' })
+                    return
+                  }
+                  if (!jiraConnection.baseUrl.trim()) {
+                    toast('连接失败', { description: '请填写 Jira Base URL' })
+                    return
+                  }
+                  if (!jiraConnection.token.trim()) {
+                    toast('连接失败', { description: '请填写 Token / 密码' })
+                    return
+                  }
+                  if (jiraConnection.authType === 'basic' && !jiraConnection.username.trim()) {
+                    toast('连接失败', { description: 'Basic Auth 需要用户名' })
+                    return
+                  }
+                  void httpPost<
+                    {
+                      baseUrl: string
+                      authType: 'pat' | 'basic'
+                      username: string
+                      token: string
+                      verifySsl: boolean
+                      timeoutSec: number
+                    },
+                    { ok: boolean; statusCode: number; message: string; site: string; account: string }
+                  >('/api/jira/test-connection', jiraConnection)
+                    .then((res) => {
+                      if (!res.ok) {
+                        toast('连接失败', { description: `${res.message}` })
+                        return
+                      }
+                      toast('连接成功', {
+                        description: res.account
+                          ? `站点 ${res.site}，账号 ${res.account}`
+                          : `站点 ${res.site}`,
+                      })
+                    })
+                    .catch((e: unknown) => {
+                      toast('连接失败', { description: e instanceof Error ? e.message : '服务不可用' })
+                    })
+                }}
               >
                 测试连接
               </Button>

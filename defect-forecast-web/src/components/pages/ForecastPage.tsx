@@ -1,4 +1,4 @@
-import { Database, Download, FileSpreadsheet, History, Sparkles, Wand2 } from 'lucide-react'
+import { Database, Download, FileSpreadsheet, History, Sparkles, Trash2, Wand2 } from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 import {
@@ -56,6 +56,13 @@ export function ForecastPage() {
   }, [teams])
 
   const [result, setResult] = React.useState<ForecastResult | null>(null)
+  const [versions, setVersions] = React.useState<{ id: string; createdAt: string; note: string; cycle: string }[]>([])
+
+  const refreshVersions = React.useCallback(() => {
+    return services.forecastService.listForecastVersions(params.newProjectName).then((rows) => {
+      setVersions(rows.map((x) => ({ id: x.id, createdAt: x.createdAt, note: x.note, cycle: x.cycle })))
+    })
+  }, [params.newProjectName])
 
   React.useEffect(() => {
     let cancelled = false
@@ -75,6 +82,10 @@ export function ForecastPage() {
       cancelled = true
     }
   }, [params, enabledTestingTeams, enabledDevTeams, milestones, refProjects])
+
+  React.useEffect(() => {
+    void refreshVersions()
+  }, [refreshVersions])
 
   if (!result) {
     return (
@@ -105,7 +116,28 @@ export function ForecastPage() {
             type="button"
             variant="outline"
             className="rounded-2xl"
-            onClick={() => toast('本轮未实现', { description: '保存预测记录 Coming soon' })}
+            onClick={() => {
+              if (!result) return
+              void services.forecastService
+                .saveForecastVersion({
+                  projectName: params.newProjectName,
+                  input: {
+                    params,
+                    enabledTestingTeams,
+                    enabledDevTeams,
+                    milestones,
+                    refProjects,
+                  },
+                  result,
+                })
+                .then((saved) => {
+                  toast('已保存预测版本', { description: `版本 ${saved.id.slice(0, 8)}` })
+                  return refreshVersions()
+                })
+                .catch((e: unknown) => {
+                  toast('保存失败', { description: e instanceof Error ? e.message : '服务调用失败' })
+                })
+            }}
           >
             <Download className="mr-2 h-4 w-4" />
             保存预测记录
@@ -227,6 +259,7 @@ export function ForecastPage() {
         <TabsList className="rounded-2xl">
           <TabsTrigger value="weekly">按周结果</TabsTrigger>
           <TabsTrigger value="team">开发/测试拆分</TabsTrigger>
+          <TabsTrigger value="versions">预测版本</TabsTrigger>
           <TabsTrigger value="excel">Excel 模板预览</TabsTrigger>
         </TabsList>
 
@@ -255,6 +288,68 @@ export function ForecastPage() {
                       <TableCell>{r.backlog}</TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="versions" className="mt-4">
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>预测版本记录</CardTitle>
+              <CardDescription>用于后续与历史/JIRA 实际做对比分析</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>版本ID</TableHead>
+                    <TableHead>周期</TableHead>
+                    <TableHead>备注</TableHead>
+                    <TableHead>创建时间</TableHead>
+                    <TableHead>操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {versions.map((v) => (
+                    <TableRow key={v.id}>
+                      <TableCell className="font-mono text-xs">{v.id}</TableCell>
+                      <TableCell>{v.cycle}</TableCell>
+                      <TableCell>{v.note || '-'}</TableCell>
+                      <TableCell>{new Date(v.createdAt).toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 rounded-xl px-3"
+                          onClick={() => {
+                            void services.forecastService
+                              .deleteForecastVersion(v.id)
+                              .then(() => {
+                                toast('已删除版本')
+                                return refreshVersions()
+                              })
+                              .catch((e: unknown) => {
+                                toast('删除失败', {
+                                  description: e instanceof Error ? e.message : '服务调用失败',
+                                })
+                              })
+                          }}
+                        >
+                          <Trash2 className="mr-1 h-4 w-4" />
+                          删除
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!versions.length && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-slate-500">
+                        暂无版本记录
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { initialFieldMappings } from '@/data/mock/fieldMappings'
-import type { FieldMapping } from '@/types/settings'
+import { services } from '@/services'
+import type { FieldMapping, JiraConnectionConfig } from '@/types/settings'
 
 const LOCAL_KEY = 'defectForecast.fieldMappings.v1'
+const JIRA_CONN_KEY = 'defectForecast.jiraConnection.v1'
 
 function persistFieldMappings(fieldMappings: FieldMapping[]) {
   try {
@@ -49,18 +51,61 @@ function loadFieldMappings(): FieldMapping[] | null {
   }
 }
 
+function persistJiraConnection(jiraConnection: JiraConnectionConfig) {
+  try {
+    localStorage.setItem(JIRA_CONN_KEY, JSON.stringify(jiraConnection))
+  } catch {
+    // ignore
+  }
+}
+
+function loadJiraConnection(): JiraConnectionConfig | null {
+  try {
+    const raw = localStorage.getItem(JIRA_CONN_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<JiraConnectionConfig>
+    if (!parsed || typeof parsed !== 'object') return null
+    if (typeof parsed.baseUrl !== 'string') return null
+    if (parsed.authType !== 'pat' && parsed.authType !== 'basic') return null
+    return {
+      baseUrl: parsed.baseUrl,
+      authType: parsed.authType,
+      username: typeof parsed.username === 'string' ? parsed.username : '',
+      token: typeof parsed.token === 'string' ? parsed.token : '',
+      verifySsl: parsed.verifySsl !== false,
+      timeoutSec:
+        typeof parsed.timeoutSec === 'number' && Number.isFinite(parsed.timeoutSec)
+          ? Math.max(3, Math.min(60, Math.round(parsed.timeoutSec)))
+          : 10,
+    }
+  } catch {
+    return null
+  }
+}
+
 type SettingsState = {
   fieldMappings: FieldMapping[]
+  hydrateFieldMappingsFromServer: () => Promise<void>
   setFieldMappings: (fieldMappings: FieldMapping[]) => void
   addFieldMapping: (row: Omit<FieldMapping, 'id'>) => void
   updateFieldMapping: (row: FieldMapping) => void
   removeFieldMapping: (id: string) => void
+  jiraConnection: JiraConnectionConfig
+  setJiraConnection: (next: Partial<JiraConnectionConfig>) => void
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   fieldMappings: loadFieldMappings() ?? initialFieldMappings,
+  hydrateFieldMappingsFromServer: async () => {
+    const rows = await services.configService.listFieldMappings()
+    persistFieldMappings(rows)
+    set({ fieldMappings: rows })
+  },
   setFieldMappings: (fieldMappings) => {
     persistFieldMappings(fieldMappings)
+    void services.configService.saveFieldMappings(fieldMappings).catch(() => {
+      // keep local cache when backend save fails
+    })
     set({ fieldMappings })
   },
   addFieldMapping: (row) =>
@@ -73,18 +118,41 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         },
       ]
       persistFieldMappings(next)
+      void services.configService.saveFieldMappings(next).catch(() => {
+        // keep local cache when backend save fails
+      })
       return { fieldMappings: next }
     }),
   updateFieldMapping: (row) =>
     set((s) => {
       const next = s.fieldMappings.map((x) => (x.id === row.id ? row : x))
       persistFieldMappings(next)
+      void services.configService.saveFieldMappings(next).catch(() => {
+        // keep local cache when backend save fails
+      })
       return { fieldMappings: next }
     }),
   removeFieldMapping: (id) =>
     set((s) => {
       const next = s.fieldMappings.filter((x) => x.id !== id)
       persistFieldMappings(next)
+      void services.configService.saveFieldMappings(next).catch(() => {
+        // keep local cache when backend save fails
+      })
       return { fieldMappings: next }
+    }),
+  jiraConnection: loadJiraConnection() ?? {
+    baseUrl: 'https://jira.company.com',
+    authType: 'pat',
+    username: '',
+    token: '',
+    verifySsl: true,
+    timeoutSec: 10,
+  },
+  setJiraConnection: (next) =>
+    set((s) => {
+      const merged = { ...s.jiraConnection, ...next }
+      persistJiraConnection(merged)
+      return { jiraConnection: merged }
     }),
 }))

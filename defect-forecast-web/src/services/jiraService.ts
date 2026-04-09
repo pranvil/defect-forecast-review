@@ -4,7 +4,17 @@ export interface JiraFetchRequest {
   projectKey: string
   startWeek: string
   endWeek: string
+  pullMode: 'jql' | 'projectStart'
   jql: string
+  startDate: string
+  endDate: string
+  mode?: 'normal' | 'incremental' | 'overwrite'
+  baseUrl: string
+  authType: 'pat' | 'basic'
+  username: string
+  token: string
+  verifySsl: boolean
+  timeoutSec: number
 }
 
 export interface JiraFetchResult {

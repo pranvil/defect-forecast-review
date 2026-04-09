@@ -18,5 +18,33 @@ export interface ProjectService {
   buildCreatedCompareData(projectNames: string[]): Promise<Record<string, string | number>[]>
   getCompareColors(): Promise<string[]>
   upsertCachedProjects(projects: ProjectSummary[]): Promise<void>
+  deleteCachedProject(projectName: string): Promise<void>
+  getProjectCompare(projectName: string, forecastVersionId?: string): Promise<ProjectCompareResult>
+}
+
+export interface ProjectComparePoint {
+  weekLabel: string
+  historyCreated: number
+  historyFixed: number
+  jiraCreated: number
+  jiraFixed: number
+  forecastCreated: number
+  forecastFixed: number
+  backlogHistory: number
+  backlogJira: number
+  backlogForecast: number
+}
+
+export interface ProjectCompareResult {
+  projectName: string
+  forecastVersionId?: string
+  metrics: {
+    totalHistoryCreated: number
+    totalJiraCreated: number
+    totalForecastCreated: number
+    jiraVsForecastGap: number
+    historyVsForecastGap: number
+  }
+  weekly: ProjectComparePoint[]
 }
 

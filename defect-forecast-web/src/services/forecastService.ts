@@ -33,7 +33,18 @@ export interface ForecastResult {
   teamSummary: ForecastTeamSummaryRow[]
 }
 
+export interface ForecastVersionRow {
+  id: string
+  projectName: string
+  cycle: string
+  note: string
+  createdAt: string
+}
+
 export interface ForecastService {
   getForecastResult(input: ForecastInput): Promise<ForecastResult>
+  saveForecastVersion(req: { projectName: string; input: ForecastInput; result: ForecastResult; note?: string }): Promise<ForecastVersionRow>
+  listForecastVersions(projectName?: string): Promise<ForecastVersionRow[]>
+  deleteForecastVersion(id: string): Promise<void>
 }
 

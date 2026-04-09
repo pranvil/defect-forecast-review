@@ -23,17 +23,23 @@ import { toast } from 'sonner'
 import type { ProjectSummary } from '@/services/projectService'
 import { services } from '@/services'
 import type { JiraFetchResult } from '@/services/jiraService'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { toBusinessWeekLabel } from '@/utils/week'
 
 export function JiraPage() {
   const [cachedProjects, setCachedProjects] = React.useState<ProjectSummary[]>([])
   const [projectKey, setProjectKey] = React.useState('MONETNPDISH')
-  const [startWeek, setStartWeek] = React.useState('26W2')
-  const [endWeek, setEndWeek] = React.useState('26W27')
+  const [pullMode, setPullMode] = React.useState<'jql' | 'projectStart'>('jql')
+  const [startDate, setStartDate] = React.useState('2026-01-01')
+  const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
     `project = MONETNPDISH\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created <= 2026-06-30`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
+  const jiraConnection = useSettingsStore((s) => s.jiraConnection)
+  const startWeek = React.useMemo(() => toBusinessWeekLabel(startDate), [startDate])
+  const endWeek = React.useMemo(() => toBusinessWeekLabel(endDate), [endDate])
 
   React.useEffect(() => {
     let cancelled = false
@@ -52,20 +58,43 @@ export function JiraPage() {
   }
 
   const runFetch = async (mode: 'normal' | 'incremental' | 'overwrite') => {
+    if (pullMode === 'jql' && !jql.trim()) {
+      toast('同步失败', { description: '请选择 JQL 模式并填写 JQL 条件' })
+      return
+    }
+    if (pullMode === 'projectStart') {
+      if (!startDate || !endDate) {
+        toast('同步失败', { description: '请选择开始日期和结束日期' })
+        return
+      }
+      if (startDate > endDate) {
+        toast('同步失败', { description: '开始日期不能晚于结束日期' })
+        return
+      }
+      if (!startWeek || !endWeek) {
+        toast('同步失败', { description: '日期换算业务周失败，请检查日期格式' })
+        return
+      }
+    }
     setIsFetching(true)
     try {
       const res = await services.jiraService.fetchByJql({
         projectKey,
-        startWeek,
-        endWeek,
-        jql,
+        startWeek: pullMode === 'projectStart' ? startWeek : '',
+        endWeek: pullMode === 'projectStart' ? endWeek : '',
+        pullMode,
+        jql: pullMode === 'jql' ? jql : '',
+        startDate: pullMode === 'projectStart' ? startDate : '',
+        endDate: pullMode === 'projectStart' ? endDate : '',
+        mode,
+        ...jiraConnection,
       })
       setLastResult(res)
 
       await services.projectService.upsertCachedProjects([
         {
           name: projectKey,
-          cycle: `${startWeek}-${endWeek}`,
+          cycle: res.cycleLabel.replace(' - ', '-'),
           defects: res.fetchedCount,
           teams: Math.max(1, Math.round(res.fetchedCount / 200)),
         },
@@ -77,11 +106,11 @@ export function JiraPage() {
           mode === 'normal'
             ? `抓取 ${res.fetchedCount} 条`
             : mode === 'incremental'
-              ? `增量更新 ${res.fetchedCount} 条（mock）`
-              : `覆盖重拉 ${res.fetchedCount} 条（mock）`,
+              ? `增量更新 ${res.fetchedCount} 条`
+              : `覆盖重拉 ${res.fetchedCount} 条`,
       })
-    } catch {
-      toast('同步失败', { description: 'mock service 调用失败' })
+    } catch (e: unknown) {
+      toast('同步失败', { description: e instanceof Error ? e.message : '服务调用失败' })
     } finally {
       setIsFetching(false)
     }
@@ -92,7 +121,7 @@ export function JiraPage() {
       <div>
         <h2 className="text-2xl font-semibold">JIRA 数据获取</h2>
         <p className="mt-1 text-sm text-slate-500">
-          支持直接输入 JQL。周期统一显示成业务周格式，例如 26W2-26W27。
+          可使用两种拉取方式：直接 JQL，或按项目 Key + 日期范围拉取。
         </p>
       </div>
 
@@ -100,33 +129,72 @@ export function JiraPage() {
         <Card className="rounded-2xl xl:col-span-2">
           <CardHeader>
             <CardTitle>拉数条件</CardTitle>
-            <CardDescription>
-              用户可以直接输入 JQL，也可以通过项目周期辅助理解当前抓取范围
-            </CardDescription>
+            <CardDescription>请选择一种方式拉取 Jira 数据，避免混用条件造成歧义</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label>项目 Key</Label>
-                <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>开始周期</Label>
-                <Input value={startWeek} onChange={(e) => setStartWeek(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>结束周期</Label>
-                <Input value={endWeek} onChange={(e) => setEndWeek(e.target.value)} />
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2 md:col-span-3">
+                <Label>拉取方式（二选一）</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={pullMode === 'jql' ? 'default' : 'outline'}
+                    className="rounded-2xl"
+                    onClick={() => setPullMode('jql')}
+                  >
+                    方式一：JQL
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={pullMode === 'projectStart' ? 'default' : 'outline'}
+                    className="rounded-2xl"
+                    onClick={() => setPullMode('projectStart')}
+                  >
+                    方式二：项目 Key + 日期范围
+                  </Button>
+                </div>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>JQL 输入</Label>
-              <textarea
-                className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                value={jql}
-                onChange={(e) => setJql(e.target.value)}
-              />
-            </div>
+            {pullMode === 'jql' ? (
+              <div className="space-y-2">
+                <Label>JQL 输入</Label>
+                <textarea
+                  className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                  value={jql}
+                  onChange={(e) => setJql(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>项目 Key</Label>
+                    <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>开始日期</Label>
+                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>结束日期</Label>
+                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>开始周期（自动换算）</Label>
+                    <Input value={startWeek} readOnly />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>结束周期（自动换算）</Label>
+                    <Input value={endWeek} readOnly />
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500">
+                  W1 为每年 1 月 1 日到当周周日；第二周起每周固定从周一开始。
+                </div>
+              </div>
+            )}
             <div className="flex gap-3">
               <Button className="rounded-2xl" disabled={isFetching} onClick={() => void runFetch('normal')}>
                 抓取数据

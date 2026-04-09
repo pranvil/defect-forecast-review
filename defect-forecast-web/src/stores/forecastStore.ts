@@ -1,10 +1,12 @@
 import { create } from 'zustand'
 import { initialMilestones } from '@/data/mock/milestones'
 import { initialRefProjects } from '@/data/mock/refProjects'
+import { services } from '@/services'
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 import { compareWeekAsc } from '@/utils/week'
 
 type ForecastState = {
+  hydrateDefaultsFromServer: () => Promise<void>
   refProjects: RefProjectRow[]
   setRefProjects: (refProjects: RefProjectRow[]) => void
   removeRefProject: (project: string) => void
@@ -23,50 +25,91 @@ type ForecastState = {
   setParams: (next: Partial<ForecastState['params']>) => void
 }
 
-export const useForecastStore = create<ForecastState>((set) => ({
+function saveForecastDefaults(getState: () => ForecastState) {
+  const state = getState()
+  void services.configService
+    .saveForecastDefaults({
+      refProjects: state.refProjects,
+      milestones: state.milestones,
+      params: state.params,
+    })
+    .catch(() => {
+      // keep in-memory state even when backend save fails
+    })
+}
+
+export const useForecastStore = create<ForecastState>((set, get) => ({
+  hydrateDefaultsFromServer: async () => {
+    const payload = await services.configService.getForecastDefaults()
+    set({
+      refProjects: payload.refProjects,
+      milestones: payload.milestones.slice().sort((a, b) => compareWeekAsc(a.week, b.week)),
+      params: payload.params,
+    })
+  },
   refProjects: initialRefProjects,
-  setRefProjects: (refProjects) => set({ refProjects }),
+  setRefProjects: (refProjects) => {
+    set({ refProjects })
+    saveForecastDefaults(get)
+  },
   removeRefProject: (project) =>
-    set((s) => ({
-      refProjects: s.refProjects.filter((x) => x.project !== project),
-    })),
+    set((s) => {
+      const next = s.refProjects.filter((x) => x.project !== project)
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { refProjects: next }
+    }),
   addRefProject: (row) =>
-    set((s) => ({
-      refProjects: [...s.refProjects, row],
-    })),
+    set((s) => {
+      const next = [...s.refProjects, row]
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { refProjects: next }
+    }),
   updateRefProject: (row) =>
     set((s) => {
       const exists = s.refProjects.some((x) => x.project === row.project)
-      return {
+      const next = {
         refProjects: exists
           ? s.refProjects.map((x) => (x.project === row.project ? row : x))
           : [...s.refProjects, row],
       }
+      queueMicrotask(() => saveForecastDefaults(get))
+      return next
     }),
   milestones: initialMilestones,
-  setMilestones: (milestones) => set({ milestones }),
+  setMilestones: (milestones) => {
+    set({ milestones })
+    saveForecastDefaults(get)
+  },
   addMilestone: (row) =>
-    set((s) => ({
-      milestones: [...s.milestones, row].slice().sort((a, b) => compareWeekAsc(a.week, b.week)),
-    })),
+    set((s) => {
+      const next = [...s.milestones, row].slice().sort((a, b) => compareWeekAsc(a.week, b.week))
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { milestones: next }
+    }),
   updateMilestone: (index, row) =>
-    set((s) => ({
-      milestones: s.milestones
+    set((s) => {
+      const next = s.milestones
         .map((x, i) => (i === index ? row : x))
         .slice()
-        .sort((a, b) => compareWeekAsc(a.week, b.week)),
-    })),
+        .sort((a, b) => compareWeekAsc(a.week, b.week))
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { milestones: next }
+    }),
   removeMilestone: (index) =>
-    set((s) => ({
-      milestones: s.milestones.filter((_, i) => i !== index),
-    })),
+    set((s) => {
+      const next = s.milestones.filter((_, i) => i !== index)
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { milestones: next }
+    }),
   params: {
     newProjectName: 'Aurora NP TMO',
     startWeek: '26W2',
     endWeek: '26W27',
   },
   setParams: (next) =>
-    set((s) => ({
-      params: { ...s.params, ...next },
-    })),
+    set((s) => {
+      const merged = { ...s.params, ...next }
+      queueMicrotask(() => saveForecastDefaults(get))
+      return { params: merged }
+    }),
 }))
