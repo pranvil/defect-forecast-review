@@ -23,6 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { services } from '@/services'
 import type { ProjectHistory } from '@/types/project'
 import type { ProjectCompareResult, ProjectSummary } from '@/services/projectService'
@@ -131,6 +132,21 @@ export function HistoryPage() {
       created: t.values.reduce((a, b) => a + b, 0),
     }))
     .slice(0, 6)
+  const focusWeekLabels = safeWeekly.map((x) => x.weekLabel)
+  const teamWeeklyRows = [
+    ...(focus?.createdTeams ?? []).map((t) => ({
+      team: t.team,
+      group: '测试提报',
+      values: t.values,
+      total: t.values.reduce((a, b) => a + b, 0),
+    })),
+    ...(focus?.fixedTeams ?? []).map((t) => ({
+      team: t.team,
+      group: '开发解决',
+      values: t.values,
+      total: t.values.reduce((a, b) => a + b, 0),
+    })),
+  ].sort((a, b) => b.total - a.total)
   const visibleProjects = projects.filter((p) =>
     p.name.toLowerCase().includes(projectFilter.trim().toLowerCase()),
   )
@@ -327,6 +343,26 @@ export function HistoryPage() {
 
       <Card className="rounded-2xl">
         <CardHeader>
+          <CardTitle>当前项目每周创建 / 解决趋势</CardTitle>
+          <CardDescription>解决时间仅按字段映射中的 verified 时间（如 customfield_13228 / last time to set verified_sw）统计</CardDescription>
+        </CardHeader>
+        <CardContent className="h-[320px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={safeWeekly}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="weekLabel" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="created" name="每周创建" stroke="#0f172a" dot={false} />
+              <Line type="monotone" dataKey="fixed" name="每周解决" stroke="#16a34a" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
           <CardTitle>历史 / 预测 / JIRA 实际对比</CardTitle>
           <CardDescription>默认按当前项目对比；可选择预测版本参与比较</CardDescription>
         </CardHeader>
@@ -435,6 +471,49 @@ export function HistoryPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle>{focusProject} 团队周数据</CardTitle>
+          <CardDescription>按 Reporter Team-New（测试提报）与 Assignee Team（开发解决）统计</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {teamWeeklyRows.length ? (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[220px]">团队</TableHead>
+                    <TableHead className="min-w-[100px]">类型</TableHead>
+                    <TableHead className="min-w-[80px]">总量</TableHead>
+                    {focusWeekLabels.map((week) => (
+                      <TableHead key={week} className="min-w-[78px]">
+                        {week}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {teamWeeklyRows.map((row) => (
+                    <TableRow key={`${row.group}-${row.team}`}>
+                      <TableCell className="font-medium">{row.team}</TableCell>
+                      <TableCell>{row.group}</TableCell>
+                      <TableCell>{row.total}</TableCell>
+                      {focusWeekLabels.map((_, idx) => (
+                        <TableCell key={`${row.group}-${row.team}-${idx}`}>{row.values[idx] ?? 0}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500">
+              当前项目暂无团队周数据。请先完成 Jira 抓取，并确保字段 `Reporter Team-New`、`Assignee Team` 可读。
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="rounded-2xl">
         <CardHeader>

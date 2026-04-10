@@ -26,7 +26,7 @@ async function buildErrorMessage(res: Response, fallback: string): Promise<strin
 }
 
 export async function httpGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+  const res = await fetch(`${API_BASE}${path}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new HttpError(await buildErrorMessage(res, `GET ${path} failed`), res.status)
   }

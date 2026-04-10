@@ -24,6 +24,7 @@ import type { ProjectSummary } from '@/services/projectService'
 import { services } from '@/services'
 import type { JiraFetchResult } from '@/services/jiraService'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { extractProjectKeyFromJql } from '@/utils/jiraJql'
 import { toBusinessWeekLabel } from '@/utils/week'
 
 export function JiraPage() {
@@ -40,6 +41,11 @@ export function JiraPage() {
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const startWeek = React.useMemo(() => toBusinessWeekLabel(startDate), [startDate])
   const endWeek = React.useMemo(() => toBusinessWeekLabel(endDate), [endDate])
+  const jqlParsedProjectKey = React.useMemo(() => extractProjectKeyFromJql(jql), [jql])
+
+  React.useEffect(() => {
+    if (jqlParsedProjectKey) setProjectKey(jqlParsedProjectKey)
+  }, [jqlParsedProjectKey])
 
   React.useEffect(() => {
     let cancelled = false
@@ -62,7 +68,18 @@ export function JiraPage() {
       toast('同步失败', { description: '请选择 JQL 模式并填写 JQL 条件' })
       return
     }
+    const effectiveProjectKey = (jqlParsedProjectKey ?? projectKey).trim()
+    if (pullMode === 'jql' && !effectiveProjectKey) {
+      toast('同步失败', {
+        description: 'JQL 中未识别到 project，请填写项目 Key，或在 JQL 中写明 project = KEY',
+      })
+      return
+    }
     if (pullMode === 'projectStart') {
+      if (!projectKey.trim()) {
+        toast('同步失败', { description: '请填写项目 Key' })
+        return
+      }
       if (!startDate || !endDate) {
         toast('同步失败', { description: '请选择开始日期和结束日期' })
         return
@@ -76,10 +93,11 @@ export function JiraPage() {
         return
       }
     }
+    const keyForRequest = pullMode === 'jql' ? effectiveProjectKey : projectKey.trim()
     setIsFetching(true)
     try {
       const res = await services.jiraService.fetchByJql({
-        projectKey,
+        projectKey: keyForRequest,
         startWeek: pullMode === 'projectStart' ? startWeek : '',
         endWeek: pullMode === 'projectStart' ? endWeek : '',
         pullMode,
@@ -93,7 +111,7 @@ export function JiraPage() {
 
       await services.projectService.upsertCachedProjects([
         {
-          name: projectKey,
+          name: keyForRequest,
           cycle: res.cycleLabel.replace(' - ', '-'),
           defects: res.fetchedCount,
           teams: Math.max(1, Math.round(res.fetchedCount / 200)),
@@ -156,13 +174,34 @@ export function JiraPage() {
               </div>
             </div>
             {pullMode === 'jql' ? (
-              <div className="space-y-2">
-                <Label>JQL 输入</Label>
-                <textarea
-                  className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                  value={jql}
-                  onChange={(e) => setJql(e.target.value)}
-                />
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>JQL 输入</Label>
+                  <textarea
+                    className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                    value={jql}
+                    onChange={(e) => setJql(e.target.value)}
+                  />
+                </div>
+                {jqlParsedProjectKey ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    已从 JQL 识别项目 Key（将用于存储与调试接口）：{' '}
+                    <span className="font-mono font-medium">{jqlParsedProjectKey}</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label>项目 Key（JQL 未包含 project 时必填）</Label>
+                    <Input
+                      value={projectKey}
+                      onChange={(e) => setProjectKey(e.target.value)}
+                      placeholder="例如 DVW"
+                      className="rounded-2xl font-mono"
+                    />
+                    <p className="text-xs text-slate-500">
+                      多项目 JQL（如 project in (A, B)）无法自动识别时，请手动填写用于落库与调试快照的项目 Key。
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -237,15 +276,15 @@ export function JiraPage() {
               </div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">本次抓取</div>
+              <div className="text-sm text-slate-500">本次抓取（Issue 条数）</div>
               <div className="mt-1 font-medium">
                 {lastResult ? `${lastResult.fetchedCount} 条` : '-'}
               </div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">写入数据库</div>
+              <div className="text-sm text-slate-500">涉及业务周（聚合后写入/更新的周行数）</div>
               <div className="mt-1 font-medium">
-                {lastResult ? `${lastResult.writtenCount} / ${lastResult.fetchedCount}` : '-'}
+                {lastResult ? `${lastResult.writtenCount} 周` : '-'}
               </div>
             </div>
             <Progress value={isFetching ? 60 : lastResult?.status === 'success' ? 100 : 0} />
