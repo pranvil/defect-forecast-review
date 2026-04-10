@@ -1,8 +1,8 @@
 import { compareColors } from '@/data/mock/compareColors'
-import { weekLabels, weeks } from '@/data/mock/calendar'
+import { weekLabels } from '@/data/mock/calendar'
 import { getProjectHistory, projectLibrary, projectNames } from '@/data/mock/projects'
 import { delay } from '@/services/delay'
-import type { ProjectService, ProjectSummary } from '@/services/projectService'
+import type { CompareBuildOptions, ProjectService, ProjectSummary } from '@/services/projectService'
 
 const CACHE_KEY = 'defectForecast.cachedProjects.v1'
 
@@ -42,6 +42,23 @@ function persistCache(rows: ProjectSummary[]) {
   }
 }
 
+function parseWeekLabel(label: string): [number, number] {
+  const clean = label.trim().toUpperCase().replaceAll(' ', '')
+  const match = /^(\d{2})W(\d{1,2})$/.exec(clean)
+  if (!match) return [9999, 9999]
+  return [Number.parseInt(match[1]!, 10), Number.parseInt(match[2]!, 10)]
+}
+
+function sortWeekLabels(labels: string[]): string[] {
+  return labels.sort((a, b) => {
+    const [ay, aw] = parseWeekLabel(a)
+    const [by, bw] = parseWeekLabel(b)
+    if (ay !== by) return ay - by
+    if (aw !== bw) return aw - bw
+    return a.localeCompare(b)
+  })
+}
+
 let cachedProjects: ProjectSummary[] =
   loadCache() ??
   projectNames.map((name) => ({
@@ -63,14 +80,49 @@ export const projectServiceMock: ProjectService = {
     return getProjectHistory(projectName)
   },
 
-  async buildCreatedCompareData(selected: string[]) {
+  async buildCreatedCompareData(selected: string[], options?: CompareBuildOptions) {
     await delay(80)
-    return weeks.map((_, idx) => {
-      const row: Record<string, string | number> = {
-        week: weekLabels[idx] ?? '',
+    if (!selected.length) return []
+
+    const axisMode = options?.axisMode ?? 'calendar'
+    const calendarWindow = options?.calendarWindow ?? 'full'
+    const relativeLength = options?.relativeLength ?? 'full'
+    const datasets = selected.map((name) => getProjectHistory(name))
+
+    if (axisMode === 'relative') {
+      const lengths = datasets.map((d) => d.weekly.length).filter((n) => n > 0)
+      if (!lengths.length) return []
+      const totalLen = relativeLength === 'shortest' ? Math.min(...lengths) : Math.max(...lengths)
+      return Array.from({ length: totalLen }, (_, idx) => {
+        const row: Record<string, string | number | null> = { week: `第${idx + 1}周` }
+        datasets.forEach((dataset) => {
+          row[dataset.name] = dataset.weekly[idx]?.created ?? null
+        })
+        return row
+      })
+    }
+
+    const weekSets = datasets.map((d) => new Set(d.weekly.map((w) => w.weekLabel)))
+    let labels: string[] = []
+    if (calendarWindow === 'overlap') {
+      const [head, ...tail] = weekSets
+      if (!head) return []
+      labels = Array.from(head).filter((w) => tail.every((s) => s.has(w)))
+    } else {
+      labels = weekLabels.slice()
+      if (!labels.length) {
+        const all = new Set<string>()
+        weekSets.forEach((s) => s.forEach((w) => all.add(w)))
+        labels = Array.from(all)
       }
-      selected.forEach((project) => {
-        row[project] = projectLibrary[project]?.weekly[idx]?.created ?? 0
+    }
+    labels = sortWeekLabels(labels)
+
+    return labels.map((label) => {
+      const row: Record<string, string | number | null> = { week: label }
+      datasets.forEach((dataset) => {
+        const matched = dataset.weekly.find((w) => w.weekLabel === label)
+        row[dataset.name] = matched?.created ?? null
       })
       return row
     })

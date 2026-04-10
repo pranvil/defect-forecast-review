@@ -68,6 +68,19 @@ function businessWeekStartDate(year: number, week: number): Date | null {
   return out
 }
 
+function businessWeekEndDate(year: number, week: number): Date | null {
+  const start = businessWeekStartDate(year, week)
+  if (!start) return null
+  if (week === 1) {
+    const firstSunday = firstSundayOfYear(year)
+    return firstSunday.getFullYear() === year ? firstSunday : new Date(year, 11, 31)
+  }
+  const out = new Date(start)
+  out.setDate(start.getDate() + 6)
+  if (out.getFullYear() !== year) return new Date(year, 11, 31)
+  return out
+}
+
 export function toBusinessWeekLabel(dateInput: string): string {
   const d = parseDateInput(dateInput)
   if (!d) return ''
@@ -108,6 +121,22 @@ export function firstDayDateOfWeek(week: string): string {
   const start = businessWeekStartDate(parsed.year, parsed.week)
   if (!start) return ''
   return formatMD(start)
+}
+
+function formatISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = `${d.getMonth() + 1}`.padStart(2, '0')
+  const day = `${d.getDate()}`.padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export function businessWeekBoundsIso(week: string): { start: string; end: string } | null {
+  const parsed = parseYearWeek(week)
+  if (!parsed) return null
+  const start = businessWeekStartDate(parsed.year, parsed.week)
+  const end = businessWeekEndDate(parsed.year, parsed.week)
+  if (!start || !end) return null
+  return { start: formatISODate(start), end: formatISODate(end) }
 }
 
 export function listYearWeekLabels(year = 2026): string[] {

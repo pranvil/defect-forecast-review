@@ -8,14 +8,28 @@ export interface ProjectSummary {
   similarity?: number
 }
 
+export type CompareAxisMode = 'calendar' | 'relative'
+export type CompareCalendarWindow = 'full' | 'overlap'
+export type CompareRelativeLength = 'full' | 'shortest'
+
+export interface CompareBuildOptions {
+  axisMode?: CompareAxisMode
+  calendarWindow?: CompareCalendarWindow
+  relativeLength?: CompareRelativeLength
+}
+
 export interface ProjectService {
   listCachedProjects(): Promise<ProjectSummary[]>
   getProjectHistory(projectName: string): Promise<ProjectHistory>
   /**
-   * For history compare chart (Created trends) by week label.
-   * Each row has a `week` field plus a key per selected project.
+   * For history compare chart (Created trends).
+   * Each row has an x-axis `week` label plus a key per selected project.
+   * Missing points are null so lines break naturally instead of forcing 0.
    */
-  buildCreatedCompareData(projectNames: string[]): Promise<Record<string, string | number>[]>
+  buildCreatedCompareData(
+    projectNames: string[],
+    options?: CompareBuildOptions,
+  ): Promise<Record<string, string | number | null>[]>
   getCompareColors(): Promise<string[]>
   upsertCachedProjects(projects: ProjectSummary[]): Promise<void>
   deleteCachedProject(projectName: string): Promise<void>

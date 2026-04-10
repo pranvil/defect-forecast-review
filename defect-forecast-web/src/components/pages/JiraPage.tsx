@@ -27,6 +27,8 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { extractProjectKeyFromJql } from '@/utils/jiraJql'
 import { toBusinessWeekLabel } from '@/utils/week'
 
+const JIRA_FETCH_FORM_KEY = 'drp.jira.fetch.form.v1'
+
 export function JiraPage() {
   const [cachedProjects, setCachedProjects] = React.useState<ProjectSummary[]>([])
   const [projectKey, setProjectKey] = React.useState('MONETNPDISH')
@@ -44,8 +46,56 @@ export function JiraPage() {
   const jqlParsedProjectKey = React.useMemo(() => extractProjectKeyFromJql(jql), [jql])
 
   React.useEffect(() => {
-    if (jqlParsedProjectKey) setProjectKey(jqlParsedProjectKey)
-  }, [jqlParsedProjectKey])
+    try {
+      const raw = localStorage.getItem(JIRA_FETCH_FORM_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as {
+        projectKey?: unknown
+        pullMode?: unknown
+        startDate?: unknown
+        endDate?: unknown
+        jql?: unknown
+      }
+      if (parsed.pullMode === 'jql' || parsed.pullMode === 'projectStart') {
+        setPullMode(parsed.pullMode)
+      }
+      if (typeof parsed.projectKey === 'string') {
+        setProjectKey(parsed.projectKey)
+      }
+      if (typeof parsed.startDate === 'string') {
+        setStartDate(parsed.startDate)
+      }
+      if (typeof parsed.endDate === 'string') {
+        setEndDate(parsed.endDate)
+      }
+      if (typeof parsed.jql === 'string') {
+        setJql(parsed.jql)
+      }
+    } catch {
+      // ignore malformed local cache
+    }
+  }, [])
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(
+        JIRA_FETCH_FORM_KEY,
+        JSON.stringify({
+          projectKey,
+          pullMode,
+          startDate,
+          endDate,
+          jql,
+        }),
+      )
+    } catch {
+      // ignore write failure
+    }
+  }, [projectKey, pullMode, startDate, endDate, jql])
+
+  React.useEffect(() => {
+    if (pullMode === 'jql' && jqlParsedProjectKey) setProjectKey(jqlParsedProjectKey)
+  }, [jqlParsedProjectKey, pullMode])
 
   React.useEffect(() => {
     let cancelled = false

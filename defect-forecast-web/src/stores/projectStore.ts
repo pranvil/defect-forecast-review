@@ -21,9 +21,9 @@ type ProjectState = {
 export const useProjectStore = create<ProjectState>((set, get) => ({
   activeSection: 'history',
   setActiveSection: (activeSection) => set({ activeSection }),
-  selectedProjects: ['Monet NP Dish', 'Beryl TMO'],
+  selectedProjects: [],
   setSelectedProjects: (selectedProjects) => set({ selectedProjects }),
-  focusProject: 'Monet NP Dish',
+  focusProject: '',
   setFocusProject: (focusProject) => set({ focusProject }),
   toggleSelectedProject: (name) => {
     const { selectedProjects, focusProject } = get()

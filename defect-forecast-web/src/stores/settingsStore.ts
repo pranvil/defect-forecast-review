@@ -142,7 +142,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       return { fieldMappings: next }
     }),
   jiraConnection: loadJiraConnection() ?? {
-    baseUrl: 'https://jira.company.com',
+    baseUrl: 'https://jira.tcl.com',
     authType: 'pat',
     username: '',
     token: '',

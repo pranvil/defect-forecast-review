@@ -1,14 +1,17 @@
 # DRP Web Client
 
-## 启动（联调后端）
+## 启动（联调）
+
+推荐在仓库根目录一键启停前后端，见 [../README.md](../README.md) 中的 `drp-dev.ps1`。
+
+仅启动本前端时：
 
 ```bash
 cd c:\code\DRP\defect-forecast-web
 copy .env.example .env    # 只在第一次创建 .env 时需要。
-npm install  #只在第一次、或你/同事更新了依赖（package.json / lockfile 变了）、或删了 node_modules 才需要再跑
+npm install   # 首次、或依赖变更后
 npm run dev
 ```
-后端：在 c:\code\DRP\export-service 跑 uvicorn app.main:app --port 8000（或你实际用的端口）
 
 默认会调用 `http://127.0.0.1:8000`，可在 `.env` 中调整：
 

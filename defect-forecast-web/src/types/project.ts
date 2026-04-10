@@ -12,6 +12,7 @@ export interface WeeklyPoint {
 export interface TeamWeeklyRow {
   team: string
   values: number[]
+  issueKeysByWeek?: string[][]
 }
 
 export interface MilestoneLabel {
