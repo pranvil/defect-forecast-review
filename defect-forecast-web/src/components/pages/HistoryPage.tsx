@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { services } from '@/services'
 import type { ForecastDataset } from '@/services/forecastService'
 import type { ProjectHistory } from '@/types/project'
@@ -56,6 +57,7 @@ import { addCalendarDaysIso, businessWeekBoundsIso, firstDayDateOfWeek } from '@
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
 const DEFAULT_JIRA_BASE_URL = 'https://jira.tcl.com'
+const JIRA_ISSUE_TYPE_CLAUSE = 'issuetype in (defect, defect_new)'
 
 function isCompareAxisMode(value: unknown): value is CompareAxisMode {
   return value === 'calendar' || value === 'relative'
@@ -168,6 +170,22 @@ export function HistoryPage() {
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
 
   const [projects, setProjects] = React.useState<ProjectSummary[]>([])
+  const projectLabelByKey = React.useMemo(() => {
+    const map = new Map<string, string>()
+    projects.forEach((p) => {
+      const label = p.displayName?.trim()
+      if (label) map.set(p.name, label)
+    })
+    return map
+  }, [projects])
+  const formatProjectLabel = React.useCallback(
+    (key: string) => {
+      const label = projectLabelByKey.get(key)
+      return label ? `${label}（${key}）` : key
+    },
+    [projectLabelByKey],
+  )
+  const focusProjectLabel = React.useMemo(() => formatProjectLabel(focusProject), [focusProject, formatProjectLabel])
   const [compareData, setCompareData] = React.useState<Record<string, string | number | null>[]>([])
   const [compareColors, setCompareColors] = React.useState<string[]>([])
   const [focusDataset, setFocusDataset] = React.useState<ProjectHistory | null>(null)
@@ -399,25 +417,32 @@ export function HistoryPage() {
     return out
   }, [compareDataWithDate])
   const focusWeekLabels = safeWeekly.map((x) => x.weekLabel)
-  const teamWeeklyRows = [
-    ...(focus?.createdTeams ?? []).map((t) => ({
+  const testingTeamWeeklyRows = (focus?.createdTeams ?? [])
+    .map((t) => ({
       team: t.team,
       group: '测试提报',
       values: t.values,
       issueKeysByWeek: t.issueKeysByWeek ?? [],
       total: t.values.reduce((a, b) => a + b, 0),
-    })),
-    ...(focus?.fixedTeams ?? []).map((t) => ({
+    }))
+    .sort((a, b) => b.total - a.total)
+  const devTeamWeeklyRows = (focus?.fixedTeams ?? [])
+    .map((t) => ({
       team: t.team,
       group: '开发解决',
       values: t.values,
       issueKeysByWeek: t.issueKeysByWeek ?? [],
       total: t.values.reduce((a, b) => a + b, 0),
-    })),
-  ].sort((a, b) => b.total - a.total)
-  const visibleProjects = projects.filter((p) =>
-    p.name.toLowerCase().includes(projectFilter.trim().toLowerCase()),
-  )
+    }))
+    .sort((a, b) => b.total - a.total)
+  const visibleProjects = projects.filter((p) => {
+    const q = projectFilter.trim().toLowerCase()
+    if (!q) return true
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.displayName?.trim() ?? '').toLowerCase().includes(q)
+    )
+  })
   const projectTotalPages = Math.max(1, Math.ceil(visibleProjects.length / PROJECT_PAGE_SIZE))
   const safeProjectPage = Math.max(1, Math.min(projectPage, projectTotalPages))
   const paginatedProjects = visibleProjects.slice(
@@ -457,6 +482,8 @@ export function HistoryPage() {
   const addCachedProject = async () => {
     const name = window.prompt('请输入项目名（唯一）')
     if (!name || !name.trim()) return
+    const displayName =
+      window.prompt('请输入项目名称（可选，用于展示）', '') ?? ''
     const cycle = window.prompt('请输入周期（例如 26W2-26W27）', '26W2-26W27') ?? '26W2-26W27'
     const defectsRaw = window.prompt('请输入 Defect 总数', '0') ?? '0'
     const teamsRaw = window.prompt('请输入团队数', '1') ?? '1'
@@ -470,6 +497,7 @@ export function HistoryPage() {
       await services.projectService.upsertCachedProjects([
         {
           name: name.trim(),
+          displayName: displayName.trim() ? displayName.trim() : undefined,
           cycle: cycle.trim() || '26W2-26W27',
           defects,
           teams,
@@ -561,9 +589,9 @@ export function HistoryPage() {
         const createdUpper = createdEndExclusive
           ? `created < "${createdEndExclusive}"`
           : `created <= "${bounds.end}"`
-        return `${projectClause} AND (${teamClause}) AND created >= "${bounds.start}" AND ${createdUpper}`
+        return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND created >= "${bounds.start}" AND ${createdUpper}`
       }
-      return `${projectClause} AND (${teamClause}) AND (${buildFixedTimeRangeClause(bounds.start, bounds.end)})`
+      return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND (${buildFixedTimeRangeClause(bounds.start, bounds.end)})`
     },
     [buildFixedTimeRangeClause, buildTeamClause, escapeJqlValue, focusProject],
   )
@@ -572,11 +600,81 @@ export function HistoryPage() {
     (group: string, team: string) => {
       const projectClause = `project = "${escapeJqlValue(focusProject)}"`
       const teamClause = buildTeamClause(group, team)
-      if (group === '测试提报') return `${projectClause} AND (${teamClause})`
-      return `${projectClause} AND (${teamClause}) AND ("last time to set verified_sw" is not EMPTY OR "1st time to set closed" is not EMPTY OR "1st time to set postponed" is not EMPTY OR "1st time to set deleted" is not EMPTY)`
+      if (group === '测试提报') return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause})`
+      return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND ("last time to set verified_sw" is not EMPTY OR "1st time to set closed" is not EMPTY OR "1st time to set postponed" is not EMPTY OR "1st time to set deleted" is not EMPTY)`
     },
     [buildTeamClause, escapeJqlValue, focusProject],
   )
+  const buildJiraSearchUrl = React.useCallback(
+    (jql: string) => `${jiraBaseUrl}/issues/?jql=${encodeURIComponent(jql.trim())}`,
+    [jiraBaseUrl],
+  )
+  const exportTeamWeeklyToExcel = React.useCallback(() => {
+    if (!testingTeamWeeklyRows.length && !devTeamWeeklyRows.length) {
+      toast('无可导出数据', { description: '当前项目暂无团队周数据' })
+      return
+    }
+    const escapeHtml = (value: string) =>
+      value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
+    const renderSection = (
+      title: string,
+      rows: Array<{ team: string; group: string; values: number[]; total: number }>,
+    ) => {
+      if (!rows.length) return ''
+      const headerCells = ['团队', '总量', ...focusWeekLabels]
+        .map((col) => `<th style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;">${escapeHtml(col)}</th>`)
+        .join('')
+      const bodyRows = rows
+        .map((row) => {
+          const totalJql = buildTeamTotalJql(row.group, row.team)
+          const totalUrl = totalJql ? buildJiraSearchUrl(totalJql) : ''
+          const totalCell =
+            row.total > 0 && totalUrl
+              ? `<a href="${escapeHtml(totalUrl)}">${row.total}</a>`
+              : String(row.total)
+          const weekCells = focusWeekLabels
+            .map((week, idx) => {
+              const value = row.values[idx] ?? 0
+              const jql = buildTeamWeekJql(row.group, row.team, week)
+              const url = jql ? buildJiraSearchUrl(jql) : ''
+              const valueCell =
+                value > 0 && url
+                  ? `<a href="${escapeHtml(url)}">${value}</a>`
+                  : String(value)
+              return `<td style="border:1px solid #d1d5db;padding:6px 8px;">${valueCell}</td>`
+            })
+            .join('')
+          return `<tr><td style="border:1px solid #d1d5db;padding:6px 8px;">${escapeHtml(row.team)}</td><td style="border:1px solid #d1d5db;padding:6px 8px;">${totalCell}</td>${weekCells}</tr>`
+        })
+        .join('')
+      return `<h3 style="margin:16px 0 8px;font-size:16px;">${escapeHtml(title)}</h3><table style="border-collapse:collapse;font-size:12px;">${`<thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody>`}</table>`
+    }
+    const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><h2 style="margin:0 0 12px;">${escapeHtml(focusProjectLabel)} 团队周数据</h2>${renderSection('测试团队（提报 / Created）', testingTeamWeeklyRows)}${renderSection('开发团队（解决 / Fixed）', devTeamWeeklyRows)}</body></html>`
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `team-weekly.${focusProject}.${new Date().toISOString().slice(0, 10)}.xls`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast('已导出', { description: '团队周数据已导出（含 Jira 超链接）' })
+  }, [
+    buildJiraSearchUrl,
+    buildTeamTotalJql,
+    buildTeamWeekJql,
+    devTeamWeeklyRows,
+    focusProject,
+    focusProjectLabel,
+    focusWeekLabels,
+    testingTeamWeeklyRows,
+  ])
 
   return (
     <div className="space-y-6">
@@ -609,8 +707,14 @@ export function HistoryPage() {
             className="rounded-2xl"
             onClick={() => {
               const csvRows = [
-                ['project', 'cycle', 'defects', 'teams'],
-                ...projects.map((p) => [p.name, p.cycle, String(p.defects), String(p.teams)]),
+                ['projectKey', 'projectName', 'cycle', 'defects', 'teams'],
+                ...projects.map((p) => [
+                  p.name,
+                  p.displayName?.trim() || '',
+                  p.cycle,
+                  String(p.defects),
+                  String(p.teams),
+                ]),
               ]
               const content = csvRows.map((x) => x.join(',')).join('\n')
               const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
@@ -708,7 +812,7 @@ export function HistoryPage() {
                           className="font-medium text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
                           onClick={() => setFocusProject(p.name)}
                         >
-                          {p.name}
+                          {formatProjectLabel(p.name)}
                         </button>
                         <div className="text-xs text-slate-500 sm:hidden">{p.cycle}</div>
                       </TableCell>
@@ -751,7 +855,7 @@ export function HistoryPage() {
                       }`}
                       onClick={() => setFocusProject(p.name)}
                     >
-                      {p.name}
+                      {formatProjectLabel(p.name)}
                     </button>
                     <div
                       className={`mt-1 text-xs ${
@@ -818,13 +922,13 @@ export function HistoryPage() {
         <Kpi
           title="当前项目总 Created"
           value={lastWeekly?.cumCreated ?? 0}
-          sub={focusProject}
+          sub={focusProjectLabel}
           icon={Database}
         />
         <Kpi
           title="当前项目总 Fixed"
           value={lastWeekly?.cumFixed ?? 0}
-          sub={focusProject}
+          sub={focusProjectLabel}
           icon={Sparkles}
         />
         <Kpi
@@ -836,7 +940,7 @@ export function HistoryPage() {
         <Kpi
           title="当前项目 Backlog 峰值"
           value={backlogPeak}
-          sub={focusProject}
+          sub={focusProjectLabel}
           icon={BarChart3}
         />
       </div>
@@ -944,19 +1048,19 @@ export function HistoryPage() {
                 <Kpi
                   title="历史累计Created"
                   value={projectCompare.metrics.totalHistoryCreated}
-                  sub={focusProject}
+                  sub={focusProjectLabel}
                   icon={History}
                 />
                 <Kpi
                   title="JIRA累计Created"
                   value={projectCompare.metrics.totalJiraCreated}
-                  sub={focusProject}
+                  sub={focusProjectLabel}
                   icon={Database}
                 />
                 <Kpi
                   title="预测累计Created"
                   value={projectCompare.metrics.totalForecastCreated}
-                  sub={focusProject}
+                  sub={focusProjectLabel}
                   icon={Sparkles}
                 />
               </div>
@@ -1160,7 +1264,7 @@ export function HistoryPage() {
 
       <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle>{focusProject} 团队分布（测试/开发 Top3）</CardTitle>
+          <CardTitle>{focusProjectLabel} 团队分布（测试/开发 Top3）</CardTitle>
           <CardDescription>按周累计量统计：测试看 Created Top3，开发看 Fixed Top3</CardDescription>
         </CardHeader>
         <CardContent className="h-[340px]">
@@ -1189,121 +1293,208 @@ export function HistoryPage() {
 
       <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle>{focusProject} 团队周数据</CardTitle>
-          <CardDescription>按 Reporter Team-New（测试提报）与 Assignee Team（开发解决）统计</CardDescription>
+          <CardTitle>明细与预览</CardTitle>
+          <CardDescription>
+            当前展示项目：{focusProjectLabel}。可在下方切换查看团队周数据或 Excel 预览，并分别导出。
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {teamWeeklyRows.length ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="min-w-[220px]">团队</TableHead>
-                    <TableHead className="min-w-[100px]">类型</TableHead>
-                    <TableHead className="min-w-[80px]">总量</TableHead>
-                    {focusWeekLabels.map((week) => (
-                      <TableHead key={week} className="min-w-[78px]">
-                        {week}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {teamWeeklyRows.map((row) => (
-                    <TableRow key={`${row.group}-${row.team}`}>
-                      <TableCell className="font-medium">{row.team}</TableCell>
-                      <TableCell>{row.group}</TableCell>
-                      <TableCell>
-                        {(() => {
-                          const jql = buildTeamTotalJql(row.group, row.team)
-                          if (row.total > 0 && jql) {
-                            return (
-                              <button
-                                type="button"
-                                className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
-                                title="按团队条件在 Jira 打开问题列表"
-                                onClick={() => openJiraByJql(jql)}
-                              >
-                                {row.total}
-                              </button>
-                            )
-                          }
-                          return row.total
-                        })()}
-                      </TableCell>
-                      {focusWeekLabels.map((_, idx) => (
-                        <TableCell key={`${row.group}-${row.team}-${idx}`}>
-                          {(() => {
-                            const value = row.values[idx] ?? 0
-                            const jql = buildTeamWeekJql(row.group, row.team, focusWeekLabels[idx] ?? '')
-                            if (value > 0 && jql) {
-                              return (
-                                <button
-                                  type="button"
-                                  className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
-                                  title="按该周+团队条件在 Jira 打开问题列表"
-                                  onClick={() => openJiraByJql(jql)}
-                                >
-                                  {value}
-                                </button>
-                              )
-                            }
-                            return value
-                          })()}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <div className="text-sm text-slate-500">
-              当前项目暂无团队周数据。请先完成 Jira 抓取，并确保字段 `Reporter Team-New`、`Assignee Team` 可读。
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <Tabs defaultValue="excel" className="space-y-4">
+            <TabsList variant="line" className="w-full justify-start">
+              <TabsTrigger value="excel">Excel 预览</TabsTrigger>
+              <TabsTrigger value="team">团队周数据</TabsTrigger>
+            </TabsList>
 
-      <Card className="rounded-2xl">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle>Excel 预览</CardTitle>
-            <CardDescription>
-              当前展示项目：{focusProject}。这个预览会尽量贴近你的模板结构，最终导出按模板文件落地。
-            </CardDescription>
-          </div>
-          <Button
-            type="button"
-            className="rounded-2xl"
-            disabled={!historyExportDataset}
-            onClick={() => {
-              if (!historyExportDataset) return
-              void services.exportService
-                .exportForecastToExcel({
-                  projectName: focusProject,
-                  dataset: historyExportDataset,
-                })
-                .then(() => {
-                  toast('已导出', { description: '已生成并下载 xlsx 文件' })
-                })
-                .catch((e: unknown) => {
-                  toast('导出失败', {
-                    description: e instanceof Error ? e.message : '请确认本地导出服务已启动',
-                  })
-                })
-            }}
-          >
-            <FileSpreadsheet className="mr-2 h-4 w-4" />
-            导出 Excel
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {focus ? (
-            <ExcelTemplatePreview projectName={focusProject} dataset={focus} />
-          ) : (
-            <div className="text-sm text-slate-500">当前项目暂无历史数据可预览</div>
-          )}
+            <TabsContent value="excel" className="space-y-3">
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  className="rounded-2xl"
+                  disabled={!historyExportDataset}
+                  onClick={() => {
+                    if (!historyExportDataset) return
+                    void services.exportService
+                      .exportForecastToExcel({
+                        projectName: focusProject,
+                        dataset: historyExportDataset,
+                      })
+                      .then(() => {
+                        toast('已导出', { description: '已生成并下载 xlsx 文件' })
+                      })
+                      .catch((e: unknown) => {
+                        toast('导出失败', {
+                          description: e instanceof Error ? e.message : '请确认本地导出服务已启动',
+                        })
+                      })
+                  }}
+                >
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  导出 Excel
+                </Button>
+              </div>
+              {focus ? (
+                <ExcelTemplatePreview projectName={focusProject} dataset={focus} />
+              ) : (
+                <div className="text-sm text-slate-500">当前项目暂无历史数据可预览</div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="team" className="space-y-4">
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-2xl"
+                  disabled={!testingTeamWeeklyRows.length && !devTeamWeeklyRows.length}
+                  onClick={exportTeamWeeklyToExcel}
+                >
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  导出团队周数据 Excel
+                </Button>
+              </div>
+              {testingTeamWeeklyRows.length || devTeamWeeklyRows.length ? (
+                <div className="space-y-6">
+                  {testingTeamWeeklyRows.length ? (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">测试团队（提报 / Created）</div>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="min-w-[220px]">团队</TableHead>
+                              <TableHead className="min-w-[80px]">总量</TableHead>
+                              {focusWeekLabels.map((week) => (
+                                <TableHead key={`test-${week}`} className="min-w-[78px]">
+                                  {week}
+                                </TableHead>
+                              ))}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {testingTeamWeeklyRows.map((row) => (
+                              <TableRow key={`testing-${row.team}`}>
+                                <TableCell className="font-medium">{row.team}</TableCell>
+                                <TableCell>
+                                  {(() => {
+                                    const jql = buildTeamTotalJql(row.group, row.team)
+                                    if (row.total > 0 && jql) {
+                                      return (
+                                        <button
+                                          type="button"
+                                          className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                                          title="按团队条件在 Jira 打开问题列表"
+                                          onClick={() => openJiraByJql(jql)}
+                                        >
+                                          {row.total}
+                                        </button>
+                                      )
+                                    }
+                                    return row.total
+                                  })()}
+                                </TableCell>
+                                {focusWeekLabels.map((_, idx) => (
+                                  <TableCell key={`testing-${row.team}-${idx}`}>
+                                    {(() => {
+                                      const value = row.values[idx] ?? 0
+                                      const jql = buildTeamWeekJql(row.group, row.team, focusWeekLabels[idx] ?? '')
+                                      if (value > 0 && jql) {
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                                            title="按该周+团队条件在 Jira 打开问题列表"
+                                            onClick={() => openJiraByJql(jql)}
+                                          >
+                                            {value}
+                                          </button>
+                                        )
+                                      }
+                                      return value
+                                    })()}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {devTeamWeeklyRows.length ? (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-700">开发团队（解决 / Fixed）</div>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="min-w-[220px]">团队</TableHead>
+                              <TableHead className="min-w-[80px]">总量</TableHead>
+                              {focusWeekLabels.map((week) => (
+                                <TableHead key={`dev-${week}`} className="min-w-[78px]">
+                                  {week}
+                                </TableHead>
+                              ))}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {devTeamWeeklyRows.map((row) => (
+                              <TableRow key={`dev-${row.team}`}>
+                                <TableCell className="font-medium">{row.team}</TableCell>
+                                <TableCell>
+                                  {(() => {
+                                    const jql = buildTeamTotalJql(row.group, row.team)
+                                    if (row.total > 0 && jql) {
+                                      return (
+                                        <button
+                                          type="button"
+                                          className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                                          title="按团队条件在 Jira 打开问题列表"
+                                          onClick={() => openJiraByJql(jql)}
+                                        >
+                                          {row.total}
+                                        </button>
+                                      )
+                                    }
+                                    return row.total
+                                  })()}
+                                </TableCell>
+                                {focusWeekLabels.map((_, idx) => (
+                                  <TableCell key={`dev-${row.team}-${idx}`}>
+                                    {(() => {
+                                      const value = row.values[idx] ?? 0
+                                      const jql = buildTeamWeekJql(row.group, row.team, focusWeekLabels[idx] ?? '')
+                                      if (value > 0 && jql) {
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="cursor-pointer text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                                            title="按该周+团队条件在 Jira 打开问题列表"
+                                            onClick={() => openJiraByJql(jql)}
+                                          >
+                                            {value}
+                                          </button>
+                                        )
+                                      }
+                                      return value
+                                    })()}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">
+                  当前项目暂无团队周数据。请先完成 Jira 抓取，并确保字段 `Reporter Team-New`、`Assignee Team` 可读。
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

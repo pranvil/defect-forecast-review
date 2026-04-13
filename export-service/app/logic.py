@@ -972,7 +972,7 @@ def list_project_summaries() -> list[ProjectSummary]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT name, cycle, defects, teams, similarity
+            SELECT name, display_name as displayName, cycle, defects, teams, similarity
             FROM project_summary
             ORDER BY name
             """
@@ -1032,7 +1032,7 @@ def get_project_history(project_name: str) -> ProjectHistory:
     with get_conn() as conn:
         summary = conn.execute(
             """
-            SELECT name, cycle, defects, teams, similarity
+            SELECT name, display_name as displayName, cycle, defects, teams, similarity
             FROM project_summary
             WHERE name = ?
             """,
@@ -1135,9 +1135,10 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO project_summary(name, cycle, defects, teams, similarity, source, updated_at)
-            VALUES(?,?,?,?,?,?,?)
+            INSERT INTO project_summary(name, display_name, cycle, defects, teams, similarity, source, updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(name) DO UPDATE SET
+              display_name = excluded.display_name,
               cycle = excluded.cycle,
               defects = excluded.defects,
               teams = excluded.teams,
@@ -1147,6 +1148,7 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
             """,
             (
                 project.name,
+                (project.displayName or "").strip(),
                 project.cycle,
                 project.defects,
                 project.teams,

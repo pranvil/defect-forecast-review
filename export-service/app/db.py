@@ -49,6 +49,7 @@ def migrate() -> None:
             """
             CREATE TABLE IF NOT EXISTS project_summary (
               name TEXT PRIMARY KEY,
+              display_name TEXT NOT NULL DEFAULT '',
               cycle TEXT NOT NULL,
               defects INTEGER NOT NULL,
               teams INTEGER NOT NULL,
@@ -58,6 +59,10 @@ def migrate() -> None:
             )
             """
         )
+        # Backward-compatible migration: add display_name if missing
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(project_summary)").fetchall()}
+        if "display_name" not in cols:
+            conn.execute("ALTER TABLE project_summary ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS project_weekly (

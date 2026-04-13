@@ -42,6 +42,7 @@ class ForecastDataset(BaseModel):
 
 class ProjectSummary(BaseModel):
     name: str
+    displayName: Optional[str] = None
     cycle: str
     defects: int
     teams: int
@@ -50,6 +51,7 @@ class ProjectSummary(BaseModel):
 
 class ProjectHistory(BaseModel):
     name: str
+    displayName: Optional[str] = None
     cycle: str
     defects: int
     teams: int

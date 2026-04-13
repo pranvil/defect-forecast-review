@@ -122,6 +122,7 @@ export function ParamsPage() {
   const devTeams = teams.filter((x) => x.type === 'development')
 
   const [projectCycleByName, setProjectCycleByName] = React.useState<Record<string, string>>({})
+  const [projectDisplayNameByKey, setProjectDisplayNameByKey] = React.useState<Record<string, string>>({})
   const [allProjects, setAllProjects] = React.useState<string[]>([])
   const milestoneFileInputRef = React.useRef<HTMLInputElement | null>(null)
 
@@ -130,10 +131,13 @@ export function ParamsPage() {
     void services.projectService.listCachedProjects().then((rows) => {
       if (cancelled) return
       const map: Record<string, string> = {}
+      const displayMap: Record<string, string> = {}
       rows.forEach((p) => {
         map[p.name] = p.cycle
+        if (p.displayName?.trim()) displayMap[p.name] = p.displayName.trim()
       })
       setProjectCycleByName(map)
+      setProjectDisplayNameByKey(displayMap)
       setAllProjects(rows.map((p) => p.name))
     })
     return () => {
@@ -348,7 +352,11 @@ export function ParamsPage() {
               <TableBody>
                 {refProjects.map((row) => (
                   <TableRow key={row.project}>
-                    <TableCell className="font-medium">{row.project}</TableCell>
+                    <TableCell className="font-medium">
+                      {projectDisplayNameByKey[row.project]
+                        ? `${projectDisplayNameByKey[row.project]}（${row.project}）`
+                        : row.project}
+                    </TableCell>
                     <TableCell>
                       {projectCycleByName[row.project] ?? '26W?-26W?'}
                     </TableCell>

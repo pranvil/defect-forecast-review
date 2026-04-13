@@ -34,11 +34,12 @@ const DEFAULT_PROJECT_KEY = 'MNTNPOM'
 export function JiraPage() {
   const [cachedProjects, setCachedProjects] = React.useState<ProjectSummary[]>([])
   const [projectKey, setProjectKey] = React.useState(DEFAULT_PROJECT_KEY)
+  const [projectDisplayName, setProjectDisplayName] = React.useState('')
   const [pullMode, setPullMode] = React.useState<'jql' | 'projectStart'>('jql')
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
-    `project = MNTNPOM\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
+    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
@@ -58,6 +59,7 @@ export function JiraPage() {
       if (!raw) return
       const parsed = JSON.parse(raw) as {
         projectKey?: unknown
+        projectDisplayName?: unknown
         pullMode?: unknown
         startDate?: unknown
         endDate?: unknown
@@ -68,6 +70,9 @@ export function JiraPage() {
       }
       if (typeof parsed.projectKey === 'string' && parsed.projectKey.trim()) {
         setProjectKey(parsed.projectKey.trim())
+      }
+      if (typeof parsed.projectDisplayName === 'string') {
+        setProjectDisplayName(parsed.projectDisplayName)
       }
       if (typeof parsed.startDate === 'string') {
         setStartDate(parsed.startDate)
@@ -100,6 +105,7 @@ export function JiraPage() {
         JIRA_FETCH_FORM_KEY,
         JSON.stringify({
           projectKey: persistedProjectKey,
+          projectDisplayName,
           pullMode,
           startDate,
           endDate,
@@ -109,7 +115,7 @@ export function JiraPage() {
     } catch {
       // ignore write failure
     }
-  }, [isFormHydrated, projectKey, pullMode, startDate, endDate, jql])
+  }, [isFormHydrated, projectKey, projectDisplayName, pullMode, startDate, endDate, jql])
 
   React.useEffect(() => {
     let cancelled = false
@@ -176,6 +182,7 @@ export function JiraPage() {
       await services.projectService.upsertCachedProjects([
         {
           name: keyForRequest,
+          displayName: projectDisplayName.trim() ? projectDisplayName.trim() : undefined,
           cycle: res.cycleLabel.replace(' - ', '-'),
           defects: res.fetchedCount,
           teams: Math.max(1, Math.round(res.fetchedCount / 200)),
@@ -281,13 +288,29 @@ export function JiraPage() {
                     </p>
                   </div>
                 )}
+                <div className="space-y-2">
+                  <Label>项目名称（可选，用于展示）</Label>
+                  <Input
+                    value={projectDisplayName}
+                    onChange={(e) => setProjectDisplayName(e.target.value)}
+                    placeholder="例如：墨水屏项目 / 智能电视 App"
+                    className="rounded-2xl"
+                  />
+                  <p className="text-xs text-slate-500">
+                    该字段仅用于界面展示，便于区分项目；唯一标识仍以项目 Key 为准。
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                   <div className="space-y-2">
                     <Label>项目 Key</Label>
                     <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>项目名称（可选，用于展示）</Label>
+                    <Input value={projectDisplayName} onChange={(e) => setProjectDisplayName(e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label>开始日期</Label>
@@ -390,7 +413,8 @@ export function JiraPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>项目</TableHead>
+                <TableHead>项目名称</TableHead>
+                <TableHead>项目 Key</TableHead>
                 <TableHead>周期</TableHead>
                 <TableHead>Defect 数</TableHead>
                 <TableHead>团队数</TableHead>
@@ -412,6 +436,7 @@ export function JiraPage() {
                     }
                   }}
                 >
+                  <TableCell className="text-slate-700">{p.displayName?.trim() || '-'}</TableCell>
                   <TableCell className="font-medium text-sky-700 underline decoration-dotted underline-offset-2">
                     {p.name}
                   </TableCell>

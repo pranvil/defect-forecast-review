@@ -2,6 +2,8 @@ import type { ProjectHistory } from '@/types/project'
 
 export interface ProjectSummary {
   name: string
+  /** 人类可读项目名，用于展示；name 仍作为唯一 key（例如 Jira Project Key） */
+  displayName?: string
   cycle: string
   defects: number
   teams: number

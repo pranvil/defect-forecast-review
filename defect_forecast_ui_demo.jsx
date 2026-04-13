@@ -147,7 +147,7 @@ const systemFieldMappings = [
   { business: "团队字段", jiraField: "customfield_12345", purpose: "按团队统计 Created / Fixed；供团队配置和预测拆分使用", example: "系统质量二部-运营商系统测试组", active: true },
   { business: "创建时间", jiraField: "created", purpose: "按业务周统计每周创建量", example: "2026-01-12", active: true },
   { business: "解决时间", jiraField: "resolved", purpose: "按业务周统计每周解决量", example: "2026-03-09", active: true },
-  { business: "Issue Type", jiraField: "issuetype.name", purpose: "过滤 defect / bug / defect_new 等类型", example: "Defect", active: true },
+  { business: "Issue Type", jiraField: "issuetype.name", purpose: "过滤 defect / defect_new 等类型", example: "Defect", active: true },
   { business: "项目字段", jiraField: "project.key", purpose: "拉取指定项目，生成历史项目汇总", example: "MONETNPDISH", active: true },
 ];
 
@@ -477,7 +477,7 @@ function JiraPage() {
               <Label>JQL 输入</Label>
               <textarea
                 className="w-full min-h-[140px] rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                defaultValue={`project = MNTNPOM\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`}
+                defaultValue={`project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND created >= 2026-01-01\nAND created < 2026-07-01`}
               />
             </div>
             <div className="flex gap-3">

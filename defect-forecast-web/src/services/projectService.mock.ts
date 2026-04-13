@@ -23,6 +23,7 @@ function loadCache(): ProjectSummary[] | null {
       )
       .map((x) => ({
         name: x.name!,
+        displayName: typeof x.displayName === 'string' && x.displayName.trim() ? x.displayName.trim() : undefined,
         cycle: x.cycle!,
         defects: x.defects!,
         teams: x.teams!,
