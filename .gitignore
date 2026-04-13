@@ -1,0 +1,33 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.venv-pack/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- PyInstaller / local packaging (export-service) ---
+export-service/build/
+export-service/dist/
+
+# --- Secrets & local env (basename `.env`; does not match `.env.example`) ---
+.env
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE (keep team-shared VS Code snippets at repo/subdir level if needed) ---
+.idea/
