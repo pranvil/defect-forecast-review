@@ -79,6 +79,50 @@ type WeekDateTickProps = {
   dateText?: string
 }
 
+type TeamAxisTickProps = {
+  value?: string
+  payload?: {
+    value?: string
+  }
+  x?: number | string
+  y?: number | string
+}
+
+function wrapTeamName(text: string, maxCharsPerLine: number) {
+  const segments = text.split(/([\\s/_-]+)/).filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+
+  if (segments.length <= 1) {
+    for (let i = 0; i < text.length; i += maxCharsPerLine) {
+      lines.push(text.slice(i, i + maxCharsPerLine))
+    }
+    return lines
+  }
+
+  segments.forEach((segment) => {
+    const trimmed = segment.trimStart()
+    if (!trimmed) return
+    if (!current.length || current.length + trimmed.length <= maxCharsPerLine) {
+      current += trimmed
+      return
+    }
+    lines.push(current)
+    current = trimmed
+  })
+
+  if (current.length) lines.push(current)
+
+  return lines.flatMap((line) => {
+    if (line.length <= maxCharsPerLine) return [line]
+    const chunks: string[] = []
+    for (let i = 0; i < line.length; i += maxCharsPerLine) {
+      chunks.push(line.slice(i, i + maxCharsPerLine))
+    }
+    return chunks
+  })
+}
+
 function WeekDateTick({ x = 0, y = 0, value, payload, dateText = '' }: WeekDateTickProps) {
   const xNum = typeof x === 'number' ? x : Number(x) || 0
   const yNum = typeof y === 'number' ? y : Number(y) || 0
@@ -89,6 +133,27 @@ function WeekDateTick({ x = 0, y = 0, value, payload, dateText = '' }: WeekDateT
       <text x={0} y={0} dy={13} textAnchor="middle" className="fill-slate-600 text-[11px]">
         <tspan x={0}>{week}</tspan>
         {date ? <tspan x={0} dy={13}>{date}</tspan> : null}
+      </text>
+    </g>
+  )
+}
+
+function TeamAxisTick({ x = 0, y = 0, value, payload }: TeamAxisTickProps) {
+  const xNum = typeof x === 'number' ? x : Number(x) || 0
+  const yNum = typeof y === 'number' ? y : Number(y) || 0
+  const teamName = value ?? payload?.value ?? ''
+  const lines = wrapTeamName(teamName, 20)
+  const lineHeight = 13
+  const startDy = -((lines.length - 1) * lineHeight) / 2
+
+  return (
+    <g transform={`translate(${xNum},${yNum})`}>
+      <text x={0} y={0} textAnchor="end" className="fill-slate-600 text-xs">
+        {lines.map((line, idx) => (
+          <tspan key={`${line}-${idx}`} x={0} dy={idx === 0 ? startDy : lineHeight}>
+            {line}
+          </tspan>
+        ))}
       </text>
     </g>
   )
@@ -781,8 +846,8 @@ export function HistoryPage() {
           <CardTitle>当前项目每周创建 / 解决趋势</CardTitle>
           <CardDescription>解决时间按 verified_sw 及 closed/postponed/deleted 字段回退统计</CardDescription>
         </CardHeader>
-        <CardContent className="h-[320px]">
-          <div className="mb-3 flex flex-wrap gap-2">
+        <CardContent className="flex h-[320px] flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
@@ -814,39 +879,41 @@ export function HistoryPage() {
               Backlog
             </Button>
           </div>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weeklyWithDate} margin={{ bottom: 14 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis
-                dataKey="weekLabel"
-                height={56}
-                tick={(props) => (
-                  <WeekDateTick
-                    {...props}
-                    dateText={
-                      focusWeekDateMap[
-                        ((props as { value?: string; payload?: { value?: string } }).value ??
-                          (props as { value?: string; payload?: { value?: string } }).payload?.value ??
-                          '') as string
-                      ] ?? ''
-                    }
-                  />
-                )}
-              />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              {focusLineVisible.created ? (
-                <Line type="monotone" dataKey="created" name="每周创建" stroke="#0f172a" dot={false} />
-              ) : null}
-              {focusLineVisible.fixed ? (
-                <Line type="monotone" dataKey="fixed" name="每周解决" stroke="#16a34a" dot={false} />
-              ) : null}
-              {focusLineVisible.backlog ? (
-                <Line type="monotone" dataKey="backlog" name="Backlog" stroke="#f59e0b" dot={false} />
-              ) : null}
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="min-h-0 flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={weeklyWithDate} margin={{ bottom: 14 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="weekLabel"
+                  height={56}
+                  tick={(props) => (
+                    <WeekDateTick
+                      {...props}
+                      dateText={
+                        focusWeekDateMap[
+                          ((props as { value?: string; payload?: { value?: string } }).value ??
+                            (props as { value?: string; payload?: { value?: string } }).payload?.value ??
+                            '') as string
+                        ] ?? ''
+                      }
+                    />
+                  )}
+                />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                {focusLineVisible.created ? (
+                  <Line type="monotone" dataKey="created" name="每周创建" stroke="#0f172a" dot={false} />
+                ) : null}
+                {focusLineVisible.fixed ? (
+                  <Line type="monotone" dataKey="fixed" name="每周解决" stroke="#16a34a" dot={false} />
+                ) : null}
+                {focusLineVisible.backlog ? (
+                  <Line type="monotone" dataKey="backlog" name="Backlog" stroke="#f59e0b" dot={false} />
+                ) : null}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </CardContent>
       </Card>
 
@@ -893,8 +960,8 @@ export function HistoryPage() {
                   icon={Sparkles}
                 />
               </div>
-              <div className="h-[320px]">
-                <div className="mb-3 flex flex-wrap gap-2">
+              <div className="flex h-[320px] flex-col gap-3">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     size="sm"
@@ -932,39 +999,41 @@ export function HistoryPage() {
                     预测 Created
                   </Button>
                 </div>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={projectCompareWithDate} margin={{ bottom: 14 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="weekLabel"
-                      height={56}
-                      tick={(props) => (
-                        <WeekDateTick
-                          {...props}
-                          dateText={
-                            projectCompareWeekDateMap[
-                              ((props as { value?: string; payload?: { value?: string } }).value ??
-                                (props as { value?: string; payload?: { value?: string } }).payload?.value ??
-                                '') as string
-                            ] ?? ''
-                          }
-                        />
-                      )}
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    {projectCompareLineVisible.historyCreated ? (
-                      <Line type="monotone" dataKey="historyCreated" name="历史 Created" stroke="#0f172a" dot={false} />
-                    ) : null}
-                    {projectCompareLineVisible.jiraCreated ? (
-                      <Line type="monotone" dataKey="jiraCreated" name="JIRA Created" stroke="#0284c7" dot={false} />
-                    ) : null}
-                    {projectCompareLineVisible.forecastCreated ? (
-                      <Line type="monotone" dataKey="forecastCreated" name="预测 Created" stroke="#16a34a" dot={false} />
-                    ) : null}
-                  </LineChart>
-                </ResponsiveContainer>
+                <div className="min-h-0 flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={projectCompareWithDate} margin={{ bottom: 14 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="weekLabel"
+                        height={56}
+                        tick={(props) => (
+                          <WeekDateTick
+                            {...props}
+                            dateText={
+                              projectCompareWeekDateMap[
+                                ((props as { value?: string; payload?: { value?: string } }).value ??
+                                  (props as { value?: string; payload?: { value?: string } }).payload?.value ??
+                                  '') as string
+                              ] ?? ''
+                            }
+                          />
+                        )}
+                      />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      {projectCompareLineVisible.historyCreated ? (
+                        <Line type="monotone" dataKey="historyCreated" name="历史 Created" stroke="#0f172a" dot={false} />
+                      ) : null}
+                      {projectCompareLineVisible.jiraCreated ? (
+                        <Line type="monotone" dataKey="jiraCreated" name="JIRA Created" stroke="#0284c7" dot={false} />
+                      ) : null}
+                      {projectCompareLineVisible.forecastCreated ? (
+                        <Line type="monotone" dataKey="forecastCreated" name="预测 Created" stroke="#16a34a" dot={false} />
+                      ) : null}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </>
           ) : (
@@ -1013,8 +1082,8 @@ export function HistoryPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="h-[360px]">
-          <div className="mb-3 flex flex-wrap gap-2">
+        <CardContent className="flex h-[360px] flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
             {selectedProjects.map((project, idx) => (
               <Button
                 key={`toggle-${project}`}
@@ -1036,47 +1105,49 @@ export function HistoryPage() {
             ))}
           </div>
           {compareData.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={compareDataWithDate} margin={{ bottom: 14 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="week"
-                  height={compareAxisMode === 'calendar' ? 56 : 24}
-                  tick={
-                    compareAxisMode === 'calendar'
-                      ? (props) => (
-                          <WeekDateTick
-                            {...props}
-                            dateText={
-                              historyCompareWeekDateMap[
-                                ((props as { value?: string; payload?: { value?: string } }).value ??
-                                  (props as { value?: string; payload?: { value?: string } }).payload?.value ??
-                                  '') as string
-                              ] ?? ''
-                            }
-                          />
-                        )
-                      : undefined
-                  }
-                />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                {selectedProjects.map((project, idx) => (
-                  (historyCompareLineVisible[project] ?? true) ? (
-                    <Line
-                      key={project}
-                      type="monotone"
-                      dataKey={project}
-                      stroke={compareColors[idx % Math.max(1, compareColors.length)] ?? '#0f172a'}
-                      strokeWidth={2.5}
-                      dot={false}
-                      connectNulls={false}
-                    />
-                  ) : null
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+            <div className="min-h-0 flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={compareDataWithDate} margin={{ bottom: 14 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="week"
+                    height={compareAxisMode === 'calendar' ? 56 : 24}
+                    tick={
+                      compareAxisMode === 'calendar'
+                        ? (props) => (
+                            <WeekDateTick
+                              {...props}
+                              dateText={
+                                historyCompareWeekDateMap[
+                                  ((props as { value?: string; payload?: { value?: string } }).value ??
+                                    (props as { value?: string; payload?: { value?: string } }).payload?.value ??
+                                    '') as string
+                                ] ?? ''
+                              }
+                            />
+                          )
+                        : undefined
+                    }
+                  />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  {selectedProjects.map((project, idx) => (
+                    (historyCompareLineVisible[project] ?? true) ? (
+                      <Line
+                        key={project}
+                        type="monotone"
+                        dataKey={project}
+                        stroke={compareColors[idx % Math.max(1, compareColors.length)] ?? '#0f172a'}
+                        strokeWidth={2.5}
+                        dot={false}
+                        connectNulls={false}
+                      />
+                    ) : null
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-500">
               {compareAxisMode === 'calendar' && calendarWindow === 'overlap'
@@ -1095,10 +1166,10 @@ export function HistoryPage() {
         <CardContent className="h-[340px]">
           {topTeamDistribution.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topTeamDistribution} layout="vertical" margin={{ left: 40 }}>
+              <BarChart data={topTeamDistribution} layout="vertical" margin={{ top: 8, right: 24, bottom: 24, left: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" />
-                <YAxis type="category" dataKey="team" width={180} />
+                <YAxis type="category" dataKey="team" width={220} tick={<TeamAxisTick />} interval={0} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="total" name="累计量">
