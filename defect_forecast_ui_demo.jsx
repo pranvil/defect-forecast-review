@@ -462,7 +462,7 @@ function JiraPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>项目 Key</Label>
-                <Input defaultValue="MONETNPDISH" />
+                <Input defaultValue="MNTNPOM" />
               </div>
               <div className="space-y-2">
                 <Label>开始周期</Label>
@@ -477,7 +477,7 @@ function JiraPage() {
               <Label>JQL 输入</Label>
               <textarea
                 className="w-full min-h-[140px] rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                defaultValue={`project = MONETNPDISH\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`}
+                defaultValue={`project = MNTNPOM\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`}
               />
             </div>
             <div className="flex gap-3">

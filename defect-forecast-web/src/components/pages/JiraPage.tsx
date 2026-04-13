@@ -28,18 +28,20 @@ import { extractProjectKeyFromJql } from '@/utils/jiraJql'
 import { toBusinessWeekLabel } from '@/utils/week'
 
 const JIRA_FETCH_FORM_KEY = 'drp.jira.fetch.form.v1'
+const DEFAULT_PROJECT_KEY = 'MNTNPOM'
 
 export function JiraPage() {
   const [cachedProjects, setCachedProjects] = React.useState<ProjectSummary[]>([])
-  const [projectKey, setProjectKey] = React.useState('MONETNPDISH')
+  const [projectKey, setProjectKey] = React.useState(DEFAULT_PROJECT_KEY)
   const [pullMode, setPullMode] = React.useState<'jql' | 'projectStart'>('jql')
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
-    `project = MONETNPDISH\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
+    `project = MNTNPOM\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
+  const [isFormHydrated, setIsFormHydrated] = React.useState(false)
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const startWeek = React.useMemo(() => toBusinessWeekLabel(startDate), [startDate])
   const endWeek = React.useMemo(() => toBusinessWeekLabel(endDate), [endDate])
@@ -59,8 +61,8 @@ export function JiraPage() {
       if (parsed.pullMode === 'jql' || parsed.pullMode === 'projectStart') {
         setPullMode(parsed.pullMode)
       }
-      if (typeof parsed.projectKey === 'string') {
-        setProjectKey(parsed.projectKey)
+      if (typeof parsed.projectKey === 'string' && parsed.projectKey.trim()) {
+        setProjectKey(parsed.projectKey.trim())
       }
       if (typeof parsed.startDate === 'string') {
         setStartDate(parsed.startDate)
@@ -73,15 +75,26 @@ export function JiraPage() {
       }
     } catch {
       // ignore malformed local cache
+    } finally {
+      setIsFormHydrated(true)
     }
   }, [])
 
   React.useEffect(() => {
+    if (!isFormHydrated) return
     try {
+      const raw = localStorage.getItem(JIRA_FETCH_FORM_KEY)
+      const prev = raw
+        ? (JSON.parse(raw) as { projectKey?: unknown })
+        : null
+      const persistedProjectKey =
+        projectKey.trim() ||
+        (typeof prev?.projectKey === 'string' ? prev.projectKey.trim() : '') ||
+        DEFAULT_PROJECT_KEY
       localStorage.setItem(
         JIRA_FETCH_FORM_KEY,
         JSON.stringify({
-          projectKey,
+          projectKey: persistedProjectKey,
           pullMode,
           startDate,
           endDate,
@@ -91,7 +104,7 @@ export function JiraPage() {
     } catch {
       // ignore write failure
     }
-  }, [projectKey, pullMode, startDate, endDate, jql])
+  }, [isFormHydrated, projectKey, pullMode, startDate, endDate, jql])
 
   React.useEffect(() => {
     let cancelled = false
@@ -280,14 +293,20 @@ export function JiraPage() {
                 </div>
               </div>
             )}
-            <div className="flex gap-3">
-              <Button className="rounded-2xl" disabled={isFetching} onClick={() => void runFetch('normal')}>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                className="rounded-2xl"
+                disabled={isFetching}
+                title="用本轮 Jira 结果覆盖「本次拉取条件所涉及的业务周」在库中的数据；其它周保持不变。适合同步到最新。"
+                onClick={() => void runFetch('normal')}
+              >
                 抓取数据
               </Button>
               <Button
                 variant="outline"
                 className="rounded-2xl"
                 disabled={isFetching}
+                title="只补充库中尚不存在的业务周；已有周不覆盖、不刷新。按项目+日期拉取时也会跳过已有周以减少请求。"
                 onClick={() => void runFetch('incremental')}
               >
                 增量更新
@@ -296,6 +315,7 @@ export function JiraPage() {
                 variant="outline"
                 className="rounded-2xl"
                 disabled={isFetching}
+                title="清空该项目在库内的全部 Jira 周数据，再仅写入本次拉取结果中出现的周。慎用。"
                 onClick={() => void runFetch('overwrite')}
               >
                 覆盖重拉
