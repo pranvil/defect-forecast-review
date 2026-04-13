@@ -112,6 +112,140 @@ function formatMD(d: Date): string {
   return `${m}/${day}`
 }
 
+/** 以周一为一周起点，返回该日期所在自然周的周一（本地日历日）。 */
+export function mondayOfCalendarWeek(d: Date): Date {
+  const day = d.getDay()
+  const delta = day === 0 ? -6 : 1 - day
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  out.setDate(out.getDate() + delta)
+  return out
+}
+
+export function formatIsoDateLocal(d: Date): string {
+  const y = d.getFullYear()
+  const m = `${d.getMonth() + 1}`.padStart(2, '0')
+  const day = `${d.getDate()}`.padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export function parseIsoDateLocal(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim())
+  if (!m) return null
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = Number(m[3])
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null
+  const d = new Date(year, month - 1, day)
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null
+  return d
+}
+
+function parseMdSlash(md: string, year: number): Date | null {
+  const m = /^(\d{1,2})[\/\-](\d{1,2})$/.exec(md.trim())
+  if (!m) return null
+  const month = Number(m[1])
+  const day = Number(m[2])
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return null
+  const d = new Date(year, month - 1, day)
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null
+  return d
+}
+
+function parseYmdSlash(s: string): Date | null {
+  const m = /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/.exec(s.trim())
+  if (!m) return null
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = Number(m[3])
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null
+  const d = new Date(year, month - 1, day)
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null
+  return d
+}
+
+function firstMondayInBusinessWeekSpan(year: number, week: number): Date | null {
+  const start = businessWeekStartDate(year, week)
+  const end = businessWeekEndDate(year, week)
+  if (!start || !end) return null
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  const endAt = new Date(end.getFullYear(), end.getMonth(), end.getDate())
+  while (cur <= endAt) {
+    if (cur.getDay() === 1) {
+      return new Date(cur.getFullYear(), cur.getMonth(), cur.getDate())
+    }
+    cur.setDate(cur.getDate() + 1)
+  }
+  return mondayOfCalendarWeek(start)
+}
+
+export function inferYearFromWeekHint(week: string): number {
+  return parseYearWeek(week)?.year ?? 2026
+}
+
+/** 根据周次标签得到该节点对应的「周一」日期（YYYY-MM-DD），与业务周/内置周表一致。 */
+export function milestoneWeekToMondayIso(week: string): string {
+  const wk = week.trim()
+  if (!wk) return ''
+  const idx = weekIndex(wk)
+  if (idx >= 0) {
+    const md = dates[idx]
+    const y = inferYearFromWeekHint(wk)
+    const d = parseMdSlash(md, y)
+    if (!d) return ''
+    return formatIsoDateLocal(mondayOfCalendarWeek(d))
+  }
+  const parsed = parseYearWeek(wk)
+  if (!parsed) return ''
+  const mon = firstMondayInBusinessWeekSpan(parsed.year, parsed.week)
+  if (!mon) return ''
+  return formatIsoDateLocal(mon)
+}
+
+/** 由「周一」的 YYYY-MM-DD 反推周次标签（与 milestoneWeekToMondayIso 同一套周定义）。 */
+export function milestoneMondayIsoToWeekLabel(iso: string): string {
+  const d = parseIsoDateLocal(iso)
+  if (!d) return ''
+  const mon = mondayOfCalendarWeek(d)
+  const { year, week } = businessWeekFromDate(mon)
+  return `${String(year).slice(-2)}W${week}`
+}
+
+/**
+ * 将用户输入或旧版「M/D」数据规范为周一的 YYYY-MM-DD；无法解析时返回空字符串。
+ * @param raw 用户输入或历史 date 字段
+ * @param weekHint 用于推断 M/D 缺省年份，并与周次保持一致
+ */
+export function normalizeMilestoneDateToIso(raw: string, weekHint: string): string {
+  const s = raw.trim()
+  if (!s) return ''
+  const yHint = inferYearFromWeekHint(weekHint)
+  let d: Date | null = parseIsoDateLocal(s)
+  if (!d) d = parseYmdSlash(s)
+  if (!d) d = parseMdSlash(s, yHint)
+  if (!d) {
+    const m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s)
+    if (m) {
+      const month = Number(m[1])
+      const day = Number(m[2])
+      const year = Number(m[3])
+      if (Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(year)) {
+        const t = new Date(year, month - 1, day)
+        if (t.getFullYear() === year && t.getMonth() === month - 1 && t.getDate() === day) d = t
+      }
+    }
+  }
+  if (!d) return ''
+  const mon = mondayOfCalendarWeek(d)
+  return formatIsoDateLocal(mon)
+}
+
+/** 将节点 date 规范为带年份的 ISO 周一；若无有效 date 则按 week 推算。 */
+export function ensureMilestoneDateIso(m: { date: string; week: string }): string {
+  const fromRaw = normalizeMilestoneDateToIso(m.date, m.week)
+  if (fromRaw) return fromRaw
+  return milestoneWeekToMondayIso(m.week)
+}
+
 export function firstDayDateOfWeek(week: string): string {
   const idx = weekIndex(week)
   if (idx >= 0) return dates[idx] ?? ''
@@ -121,13 +255,6 @@ export function firstDayDateOfWeek(week: string): string {
   const start = businessWeekStartDate(parsed.year, parsed.week)
   if (!start) return ''
   return formatMD(start)
-}
-
-function formatISODate(d: Date): string {
-  const y = d.getFullYear()
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${y}-${m}-${day}`
 }
 
 /** Next calendar day as YYYY-MM-DD; for JQL `field < exclusive` so the prior day is fully included. */
@@ -143,7 +270,7 @@ export function addCalendarDaysIso(ymd: string, deltaDays: number): string | nul
     return null
   }
   d.setDate(d.getDate() + deltaDays)
-  return formatISODate(d)
+  return formatIsoDateLocal(d)
 }
 
 export function businessWeekBoundsIso(week: string): { start: string; end: string } | null {
@@ -152,7 +279,7 @@ export function businessWeekBoundsIso(week: string): { start: string; end: strin
   const start = businessWeekStartDate(parsed.year, parsed.week)
   const end = businessWeekEndDate(parsed.year, parsed.week)
   if (!start || !end) return null
-  return { start: formatISODate(start), end: formatISODate(end) }
+  return { start: formatIsoDateLocal(start), end: formatIsoDateLocal(end) }
 }
 
 export function listYearWeekLabels(year = 2026): string[] {

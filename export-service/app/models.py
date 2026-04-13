@@ -118,6 +118,9 @@ class MilestoneParam(BaseModel):
     name: str
     week: str
     date: str
+    devResolutionRate: Optional[float] = None
+    testCompletionRate: Optional[float] = None
+    testSubmissionRate: Optional[float] = None
 
 
 class ForecastInput(BaseModel):

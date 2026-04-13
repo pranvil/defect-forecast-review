@@ -32,8 +32,15 @@ import { services } from '@/services'
 import { useForecastStore } from '@/stores/forecastStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTeamStore } from '@/stores/teamStore'
-import { firstDayDateOfWeek } from '@/utils/week'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  ensureMilestoneDateIso,
+  formatIsoDateLocal,
+  milestoneMondayIsoToWeekLabel,
+  milestoneWeekToMondayIso,
+  mondayOfCalendarWeek,
+  normalizeMilestoneDateToIso,
+  parseIsoDateLocal,
+} from '@/utils/week'
 import {
   Dialog,
   DialogContent,
@@ -43,6 +50,56 @@ import {
 } from '@/components/ui/dialog'
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
+type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
+
+const emptyMilestoneRates = (): MilestoneRatesForm => ({
+  dev: '',
+  testComplete: '',
+  testSubmit: '',
+})
+
+function optionalRateFromForm(s: string): number | undefined {
+  const t = s.trim().replace(/%/g, '')
+  if (!t) return undefined
+  const n = Number(t)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function formatOptionalPercent(n: number | undefined): string {
+  return n === undefined ? '—' : `${n}%`
+}
+
+/** 由周期与日期输入得到规范化的周次 + 周一 ISO 日期；无法推算则返回 null。 */
+function resolveMilestoneWeekAndDate(
+  weekRaw: string,
+  dateTextRaw: string,
+): { week: string; date: string } | null {
+  const weekTrim = weekRaw.trim()
+  const dateT = dateTextRaw.trim()
+  const fromText = dateT ? normalizeMilestoneDateToIso(dateT, weekTrim) : ''
+  const fromWeek = milestoneWeekToMondayIso(weekTrim)
+  const dateIso = fromText || fromWeek
+  if (!dateIso) return null
+  const weekFromDate = milestoneMondayIsoToWeekLabel(dateIso)
+  const week = weekFromDate || weekTrim
+  if (!week) return null
+  return { week, date: dateIso }
+}
+
+function milestoneRowFromRates(
+  base: Pick<MilestoneParam, 'name' | 'week' | 'date'>,
+  rates: MilestoneRatesForm,
+): MilestoneParam {
+  const devResolutionRate = optionalRateFromForm(rates.dev)
+  const testCompletionRate = optionalRateFromForm(rates.testComplete)
+  const testSubmissionRate = optionalRateFromForm(rates.testSubmit)
+  return {
+    ...base,
+    ...(devResolutionRate !== undefined ? { devResolutionRate } : {}),
+    ...(testCompletionRate !== undefined ? { testCompletionRate } : {}),
+    ...(testSubmissionRate !== undefined ? { testSubmissionRate } : {}),
+  }
+}
 
 export function ParamsPage() {
   const hydrateDefaultsFromServer = useForecastStore((s) => s.hydrateDefaultsFromServer)
@@ -112,6 +169,14 @@ export function ParamsPage() {
     week: '',
     date: '',
   })
+  const [milestoneDraftRates, setMilestoneDraftRates] = React.useState<MilestoneRatesForm>(
+    emptyMilestoneRates(),
+  )
+  const [milestoneEditRates, setMilestoneEditRates] = React.useState<MilestoneRatesForm>(
+    emptyMilestoneRates(),
+  )
+  const [milestoneDateTextAdd, setMilestoneDateTextAdd] = React.useState('')
+  const [milestoneDateTextEdit, setMilestoneDateTextEdit] = React.useState('')
 
   const [isReplaceRefOpen, setIsReplaceRefOpen] = React.useState(false)
   const [refEditingProjectKey, setRefEditingProjectKey] = React.useState<string | null>(null)
@@ -324,7 +389,10 @@ export function ParamsPage() {
         <Card className="rounded-2xl xl:col-span-2">
           <CardHeader>
             <CardTitle>节点信息</CardTitle>
-            <CardDescription>不同项目节点数量和名称都不同，所以作为基础参数单独维护</CardDescription>
+            <CardDescription>
+              不同项目节点数量和名称都不同，所以作为基础参数单独维护。日期保存为每周周一的
+              YYYY-MM-DD（含年份），与周期联动；旧数据仅有月/日时会按周期补全年份。
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -333,6 +401,9 @@ export function ParamsPage() {
                   <TableHead>节点名</TableHead>
                   <TableHead>周期</TableHead>
                   <TableHead>日期</TableHead>
+                  <TableHead className="whitespace-nowrap">开发解决率</TableHead>
+                  <TableHead className="whitespace-nowrap">测试完成率</TableHead>
+                  <TableHead className="whitespace-nowrap">测试提交率</TableHead>
                   <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -341,7 +412,10 @@ export function ParamsPage() {
                   <TableRow key={m.name + m.week + String(idx)}>
                     <TableCell>{m.name}</TableCell>
                     <TableCell>{m.week}</TableCell>
-                    <TableCell className="text-slate-500">{m.date}</TableCell>
+                    <TableCell className="text-slate-500">{ensureMilestoneDateIso(m)}</TableCell>
+                    <TableCell className="text-slate-600">{formatOptionalPercent(m.devResolutionRate)}</TableCell>
+                    <TableCell className="text-slate-600">{formatOptionalPercent(m.testCompletionRate)}</TableCell>
+                    <TableCell className="text-slate-600">{formatOptionalPercent(m.testSubmissionRate)}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">
                         <Button
@@ -350,9 +424,20 @@ export function ParamsPage() {
                           className="h-8 rounded-xl px-3"
                           onClick={() => {
                             setEditingMilestoneIndex(idx)
+                            const dateIso = ensureMilestoneDateIso(m)
+                            const weekSync = milestoneMondayIsoToWeekLabel(dateIso) || m.week
                             setMilestoneEditDraft({
                               ...m,
-                              date: firstDayDateOfWeek(m.week),
+                              week: weekSync,
+                              date: dateIso,
+                            })
+                            setMilestoneDateTextEdit(dateIso)
+                            setMilestoneEditRates({
+                              dev: m.devResolutionRate !== undefined ? String(m.devResolutionRate) : '',
+                              testComplete:
+                                m.testCompletionRate !== undefined ? String(m.testCompletionRate) : '',
+                              testSubmit:
+                                m.testSubmissionRate !== undefined ? String(m.testSubmissionRate) : '',
                             })
                             setIsEditMilestoneOpen(true)
                           }}
@@ -405,12 +490,26 @@ export function ParamsPage() {
                     const rows = parsed
                       .map((x) => x as Partial<MilestoneParam>)
                       .filter((x) => typeof x.name === 'string' && typeof x.week === 'string')
-                      .map((x) => ({
-                        name: x.name!.trim(),
-                        week: x.week!.trim(),
-                        date: typeof x.date === 'string' && x.date ? x.date : firstDayDateOfWeek(x.week!.trim()),
-                      }))
-                      .filter((x) => x.name && x.week)
+                      .map((x) => {
+                        const name = x.name!.trim()
+                        const week = x.week!.trim()
+                        const dateRaw = typeof x.date === 'string' ? x.date : ''
+                        const resolved = resolveMilestoneWeekAndDate(week, dateRaw)
+                        if (!resolved) return null
+                        const { week: weekOut, date } = resolved
+                        const row: MilestoneParam = { name, week: weekOut, date }
+                        const dr = x.devResolutionRate
+                        if (typeof dr === 'number' && Number.isFinite(dr)) row.devResolutionRate = dr
+                        const tc = x.testCompletionRate
+                        if (typeof tc === 'number' && Number.isFinite(tc)) row.testCompletionRate = tc
+                        const ts = x.testSubmissionRate
+                        if (typeof ts === 'number' && Number.isFinite(ts)) row.testSubmissionRate = ts
+                        return row
+                      })
+                      .filter(
+                        (x): x is MilestoneParam =>
+                          x !== null && Boolean(x.name) && Boolean(x.week),
+                      )
                     if (!rows.length) {
                       toast('导入失败', { description: '文件中没有有效节点' })
                       return
@@ -581,7 +680,17 @@ export function ParamsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isAddMilestoneOpen} onOpenChange={setIsAddMilestoneOpen}>
+      <Dialog
+        open={isAddMilestoneOpen}
+        onOpenChange={(open) => {
+          setIsAddMilestoneOpen(open)
+          if (open) {
+            setMilestoneDraft({ name: '', week: '', date: '' })
+            setMilestoneDraftRates(emptyMilestoneRates())
+            setMilestoneDateTextAdd('')
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle>新增节点</DialogTitle>
@@ -601,26 +710,98 @@ export function ParamsPage() {
               <Label>周期</Label>
               <Input
                 value={milestoneDraft.week}
-                onChange={(e) =>
-                  setMilestoneDraft((s) => {
-                    const week = e.target.value
-                    return { ...s, week, date: firstDayDateOfWeek(week) }
-                  })
-                }
+                onChange={(e) => {
+                  const week = e.target.value
+                  const iso = milestoneWeekToMondayIso(week)
+                  setMilestoneDraft((s) => ({ ...s, week, ...(iso ? { date: iso } : {}) }))
+                  if (iso) setMilestoneDateTextAdd(iso)
+                }}
                 placeholder="例如 26W12"
               />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>日期（每周周一）</Label>
+              <p className="text-xs text-slate-500">
+                手输 YYYY-MM-DD、YYYY/M/D 或 M/D；非周一会按自然周对齐到周一。也可用日历选择。
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="min-w-[9.5rem] flex-1"
+                  value={milestoneDateTextAdd}
+                  onChange={(e) => setMilestoneDateTextAdd(e.target.value)}
+                  onBlur={() => {
+                    if (!milestoneDateTextAdd.trim()) {
+                      const iso = milestoneWeekToMondayIso(milestoneDraft.week)
+                      if (iso) {
+                        setMilestoneDraft((s) => ({ ...s, date: iso }))
+                        setMilestoneDateTextAdd(iso)
+                      }
+                      return
+                    }
+                    const iso = normalizeMilestoneDateToIso(
+                      milestoneDateTextAdd.trim(),
+                      milestoneDraft.week,
+                    )
+                    if (!iso) {
+                      toast('日期无效', {
+                        description: '请使用 YYYY-MM-DD、YYYY/M/D 或 M/D（缺省年份按周期推断）',
+                      })
+                      setMilestoneDateTextAdd(milestoneDraft.date)
+                      return
+                    }
+                    const w = milestoneMondayIsoToWeekLabel(iso)
+                    setMilestoneDraft((s) => ({ ...s, date: iso, week: w }))
+                    setMilestoneDateTextAdd(iso)
+                  }}
+                  placeholder="2026-01-05 或 1/5"
+                />
+                <Input
+                  type="date"
+                  className="w-auto shrink-0 rounded-xl"
+                  value={milestoneDraft.date}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    const parsed = parseIsoDateLocal(v)
+                    if (!parsed) return
+                    const mon = mondayOfCalendarWeek(parsed)
+                    const iso = formatIsoDateLocal(mon)
+                    const w = milestoneMondayIsoToWeekLabel(iso)
+                    setMilestoneDraft((s) => ({ ...s, date: iso, week: w }))
+                    setMilestoneDateTextAdd(iso)
+                  }}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label>日期（该周第一天）</Label>
+              <Label>开发解决率（%，可选）</Label>
               <Input
-                value={milestoneDraft.date}
-                readOnly
-                placeholder="随周期自动计算"
+                value={milestoneDraftRates.dev}
+                onChange={(e) =>
+                  setMilestoneDraftRates((s) => ({ ...s, dev: e.target.value }))
+                }
+                placeholder="例如 85"
               />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>备注（占位）</Label>
-              <Textarea placeholder="第二轮后续可扩展" />
+            <div className="space-y-2">
+              <Label>测试完成率（%，可选）</Label>
+              <Input
+                value={milestoneDraftRates.testComplete}
+                onChange={(e) =>
+                  setMilestoneDraftRates((s) => ({ ...s, testComplete: e.target.value }))
+                }
+                placeholder="例如 90"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>测试提交率（%，可选）</Label>
+              <Input
+                value={milestoneDraftRates.testSubmit}
+                onChange={(e) =>
+                  setMilestoneDraftRates((s) => ({ ...s, testSubmit: e.target.value }))
+                }
+                placeholder="例如 70"
+              />
             </div>
           </div>
           <DialogFooter>
@@ -637,12 +818,26 @@ export function ParamsPage() {
               className="rounded-2xl"
               onClick={() => {
                 if (!milestoneDraft.name.trim()) return
-                addMilestone({
-                  name: milestoneDraft.name.trim(),
-                  week: milestoneDraft.week.trim(),
-                  date: firstDayDateOfWeek(milestoneDraft.week),
-                })
-                setMilestoneDraft({ name: '', week: '', date: '' })
+                const resolved = resolveMilestoneWeekAndDate(
+                  milestoneDraft.week,
+                  milestoneDateTextAdd,
+                )
+                if (!resolved) {
+                  toast('请填写有效周期或日期', {
+                    description: '至少填写其一；日期须能解析为有效日历日',
+                  })
+                  return
+                }
+                addMilestone(
+                  milestoneRowFromRates(
+                    {
+                      name: milestoneDraft.name.trim(),
+                      week: resolved.week,
+                      date: resolved.date,
+                    },
+                    milestoneDraftRates,
+                  ),
+                )
                 setIsAddMilestoneOpen(false)
               }}
             >
@@ -652,7 +847,13 @@ export function ParamsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isEditMilestoneOpen} onOpenChange={setIsEditMilestoneOpen}>
+      <Dialog
+        open={isEditMilestoneOpen}
+        onOpenChange={(open) => {
+          setIsEditMilestoneOpen(open)
+          if (!open) setEditingMilestoneIndex(null)
+        }}
+      >
         <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle>编辑节点</DialogTitle>
@@ -671,19 +872,96 @@ export function ParamsPage() {
               <Label>周期</Label>
               <Input
                 value={milestoneEditDraft.week}
+                onChange={(e) => {
+                  const week = e.target.value
+                  const iso = milestoneWeekToMondayIso(week)
+                  setMilestoneEditDraft((s) => ({ ...s, week, ...(iso ? { date: iso } : {}) }))
+                  if (iso) setMilestoneDateTextEdit(iso)
+                }}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>日期（每周周一）</Label>
+              <p className="text-xs text-slate-500">
+                手输 YYYY-MM-DD、YYYY/M/D 或 M/D；非周一会按自然周对齐到周一。也可用日历选择。
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="min-w-[9.5rem] flex-1"
+                  value={milestoneDateTextEdit}
+                  onChange={(e) => setMilestoneDateTextEdit(e.target.value)}
+                  onBlur={() => {
+                    if (!milestoneDateTextEdit.trim()) {
+                      const iso = milestoneWeekToMondayIso(milestoneEditDraft.week)
+                      if (iso) {
+                        setMilestoneEditDraft((s) => ({ ...s, date: iso }))
+                        setMilestoneDateTextEdit(iso)
+                      }
+                      return
+                    }
+                    const iso = normalizeMilestoneDateToIso(
+                      milestoneDateTextEdit.trim(),
+                      milestoneEditDraft.week,
+                    )
+                    if (!iso) {
+                      toast('日期无效', {
+                        description: '请使用 YYYY-MM-DD、YYYY/M/D 或 M/D（缺省年份按周期推断）',
+                      })
+                      setMilestoneDateTextEdit(milestoneEditDraft.date)
+                      return
+                    }
+                    const w = milestoneMondayIsoToWeekLabel(iso)
+                    setMilestoneEditDraft((s) => ({ ...s, date: iso, week: w }))
+                    setMilestoneDateTextEdit(iso)
+                  }}
+                  placeholder="2026-01-05 或 1/5"
+                />
+                <Input
+                  type="date"
+                  className="w-auto shrink-0 rounded-xl"
+                  value={milestoneEditDraft.date}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    const parsed = parseIsoDateLocal(v)
+                    if (!parsed) return
+                    const mon = mondayOfCalendarWeek(parsed)
+                    const iso = formatIsoDateLocal(mon)
+                    const w = milestoneMondayIsoToWeekLabel(iso)
+                    setMilestoneEditDraft((s) => ({ ...s, date: iso, week: w }))
+                    setMilestoneDateTextEdit(iso)
+                  }}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>开发解决率（%，可选）</Label>
+              <Input
+                value={milestoneEditRates.dev}
                 onChange={(e) =>
-                  setMilestoneEditDraft((s) => {
-                    const week = e.target.value
-                    return { ...s, week, date: firstDayDateOfWeek(week) }
-                  })
+                  setMilestoneEditRates((s) => ({ ...s, dev: e.target.value }))
                 }
+                placeholder="例如 85"
               />
             </div>
             <div className="space-y-2">
-              <Label>日期（该周第一天）</Label>
+              <Label>测试完成率（%，可选）</Label>
               <Input
-                value={milestoneEditDraft.date}
-                readOnly
+                value={milestoneEditRates.testComplete}
+                onChange={(e) =>
+                  setMilestoneEditRates((s) => ({ ...s, testComplete: e.target.value }))
+                }
+                placeholder="例如 90"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>测试提交率（%，可选）</Label>
+              <Input
+                value={milestoneEditRates.testSubmit}
+                onChange={(e) =>
+                  setMilestoneEditRates((s) => ({ ...s, testSubmit: e.target.value }))
+                }
+                placeholder="例如 70"
               />
             </div>
           </div>
@@ -702,11 +980,27 @@ export function ParamsPage() {
               onClick={() => {
                 if (editingMilestoneIndex === null) return
                 if (!milestoneEditDraft.name.trim()) return
-                updateMilestone(editingMilestoneIndex, {
-                  name: milestoneEditDraft.name.trim(),
-                  week: milestoneEditDraft.week.trim(),
-                  date: firstDayDateOfWeek(milestoneEditDraft.week),
-                })
+                const resolved = resolveMilestoneWeekAndDate(
+                  milestoneEditDraft.week,
+                  milestoneDateTextEdit,
+                )
+                if (!resolved) {
+                  toast('请填写有效周期或日期', {
+                    description: '至少填写其一；日期须能解析为有效日历日',
+                  })
+                  return
+                }
+                updateMilestone(
+                  editingMilestoneIndex,
+                  milestoneRowFromRates(
+                    {
+                      name: milestoneEditDraft.name.trim(),
+                      week: resolved.week,
+                      date: resolved.date,
+                    },
+                    milestoneEditRates,
+                  ),
+                )
                 setIsEditMilestoneOpen(false)
               }}
             >
