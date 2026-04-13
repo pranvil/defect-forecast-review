@@ -141,7 +141,7 @@ export function parseIsoDateLocal(ymd: string): Date | null {
 }
 
 function parseMdSlash(md: string, year: number): Date | null {
-  const m = /^(\d{1,2})[\/\-](\d{1,2})$/.exec(md.trim())
+  const m = /^(\d{1,2})[/-](\d{1,2})$/.exec(md.trim())
   if (!m) return null
   const month = Number(m[1])
   const day = Number(m[2])
@@ -152,7 +152,7 @@ function parseMdSlash(md: string, year: number): Date | null {
 }
 
 function parseYmdSlash(s: string): Date | null {
-  const m = /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/.exec(s.trim())
+  const m = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/.exec(s.trim())
   if (!m) return null
   const year = Number(m[1])
   const month = Number(m[2])
@@ -223,7 +223,7 @@ export function normalizeMilestoneDateToIso(raw: string, weekHint: string): stri
   if (!d) d = parseYmdSlash(s)
   if (!d) d = parseMdSlash(s, yHint)
   if (!d) {
-    const m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s)
+    const m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(s)
     if (m) {
       const month = Number(m[1])
       const day = Number(m[2])

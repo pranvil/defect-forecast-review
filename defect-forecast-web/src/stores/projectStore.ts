@@ -3,7 +3,6 @@ import { create } from 'zustand'
 export type AppSection =
   | 'config'
   | 'jira'
-  | 'teams'
   | 'history'
   | 'params'
   | 'forecast'

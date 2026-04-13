@@ -4,7 +4,6 @@ import {
   History,
   LayoutPanelLeft,
   Settings,
-  Users,
   Wand2,
 } from 'lucide-react'
 import type { AppSection } from '@/stores/projectStore'
@@ -12,7 +11,6 @@ import type { AppSection } from '@/stores/projectStore'
 const items: { key: AppSection; label: string; Icon: typeof Settings }[] = [
   { key: 'config', label: '系统配置', Icon: Settings },
   { key: 'jira', label: 'JIRA 数据获取', Icon: Database },
-  { key: 'teams', label: '团队配置', Icon: Users },
   { key: 'history', label: '历史项目', Icon: History },
   { key: 'params', label: '预测参数', Icon: Wand2 },
   { key: 'forecast', label: '预测结果', Icon: BarChart3 },

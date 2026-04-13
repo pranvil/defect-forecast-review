@@ -4,7 +4,6 @@ import { ForecastPage } from '@/components/pages/ForecastPage'
 import { HistoryPage } from '@/components/pages/HistoryPage'
 import { JiraPage } from '@/components/pages/JiraPage'
 import { ParamsPage } from '@/components/pages/ParamsPage'
-import { TeamsPage } from '@/components/pages/TeamsPage'
 import { Toaster } from '@/components/ui/sonner'
 import { useProjectStore } from '@/stores/projectStore'
 
@@ -19,7 +18,6 @@ export default function App() {
         <main className="flex-1 p-6 lg:p-8">
           {activeSection === 'config' && <ConfigPage />}
           {activeSection === 'jira' && <JiraPage />}
-          {activeSection === 'teams' && <TeamsPage />}
           {activeSection === 'history' && <HistoryPage />}
           {activeSection === 'params' && <ParamsPage />}
           {activeSection === 'forecast' && <ForecastPage />}

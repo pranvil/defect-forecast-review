@@ -23,6 +23,7 @@ import { toast } from 'sonner'
 import type { ProjectSummary } from '@/services/projectService'
 import { services } from '@/services'
 import type { JiraFetchResult } from '@/services/jiraService'
+import { useProjectStore } from '@/stores/projectStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { extractProjectKeyFromJql } from '@/utils/jiraJql'
 import { toBusinessWeekLabel } from '@/utils/week'
@@ -43,6 +44,10 @@ export function JiraPage() {
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
   const [isFormHydrated, setIsFormHydrated] = React.useState(false)
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
+  const setActiveSection = useProjectStore((s) => s.setActiveSection)
+  const selectedProjects = useProjectStore((s) => s.selectedProjects)
+  const setSelectedProjects = useProjectStore((s) => s.setSelectedProjects)
+  const setFocusProject = useProjectStore((s) => s.setFocusProject)
   const startWeek = React.useMemo(() => toBusinessWeekLabel(startDate), [startDate])
   const endWeek = React.useMemo(() => toBusinessWeekLabel(endDate), [endDate])
   const jqlParsedProjectKey = React.useMemo(() => extractProjectKeyFromJql(jql), [jql])
@@ -192,6 +197,21 @@ export function JiraPage() {
       setIsFetching(false)
     }
   }
+
+  const openCachedProject = React.useCallback(
+    (name: string) => {
+      const projectName = name.trim()
+      if (!projectName) return
+      setFocusProject(projectName)
+      if (!selectedProjects.includes(projectName)) {
+        setSelectedProjects(selectedProjects.length ? [...selectedProjects, projectName] : [projectName])
+      } else if (!selectedProjects.length) {
+        setSelectedProjects([projectName])
+      }
+      setActiveSection('history')
+    },
+    [selectedProjects, setActiveSection, setFocusProject, setSelectedProjects],
+  )
 
   return (
     <div className="space-y-6">
@@ -379,8 +399,22 @@ export function JiraPage() {
             </TableHeader>
             <TableBody>
               {cachedProjects.map((p) => (
-                <TableRow key={p.name}>
-                  <TableCell className="font-medium">{p.name}</TableCell>
+                <TableRow
+                  key={p.name}
+                  className="cursor-pointer hover:bg-slate-50"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openCachedProject(p.name)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      openCachedProject(p.name)
+                    }
+                  }}
+                >
+                  <TableCell className="font-medium text-sky-700 underline decoration-dotted underline-offset-2">
+                    {p.name}
+                  </TableCell>
                   <TableCell>{p.cycle}</TableCell>
                   <TableCell>{p.defects}</TableCell>
                   <TableCell>{p.teams}</TableCell>

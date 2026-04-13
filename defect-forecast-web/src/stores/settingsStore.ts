@@ -98,8 +98,16 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   fieldMappings: loadFieldMappings() ?? initialFieldMappings,
   hydrateFieldMappingsFromServer: async () => {
     const rows = await services.configService.listFieldMappings()
-    persistFieldMappings(rows)
-    set({ fieldMappings: rows })
+    // 后端抓数逻辑对标准字段（created/issuetype/project 等）是写死读取的；
+    // 默认映射里保留这些行会让用户误以为“必须配置”，因此在前端侧剔除。
+    const filtered = rows.filter(
+      (x) =>
+        !['created', 'resolved', 'resolutiondate', 'issuetype.name', 'project.key'].includes(
+          x.jiraFieldPath.trim(),
+        ),
+    )
+    persistFieldMappings(filtered)
+    set({ fieldMappings: filtered })
   },
   setFieldMappings: (fieldMappings) => {
     persistFieldMappings(fieldMappings)
