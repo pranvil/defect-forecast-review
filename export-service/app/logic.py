@@ -368,16 +368,23 @@ def _parse_date_ymd(text: str) -> date | None:
         return None
 
 
+def _next_calendar_day_iso(d: date) -> str:
+    """Calendar day after ``d``, as YYYY-MM-DD (exclusive upper bound for JQL date windows)."""
+    return (d + timedelta(days=1)).isoformat()
+
+
 def _build_bounded_jql(jql: str, start_week: str, end_week: str, start_date_raw: str = "", end_date_raw: str = "") -> str:
     start_dt = _parse_date_ymd(start_date_raw)
     end_dt = _parse_date_ymd(end_date_raw)
     if start_dt and end_dt:
-        begin = min(start_dt, end_dt).isoformat()
-        finish = max(start_dt, end_dt).isoformat()
+        low, high = min(start_dt, end_dt), max(start_dt, end_dt)
+        begin = low.isoformat()
+        finish_exclusive = _next_calendar_day_iso(high)
     else:
         begin, _ = _week_bounds_iso(start_week)
         _, finish = _week_bounds_iso(end_week)
-    bound = f"(created >= '{begin}' AND created <= '{finish}')"
+        finish_exclusive = _next_calendar_day_iso(date.fromisoformat(finish))
+    bound = f"(created >= '{begin}' AND created < '{finish_exclusive}')"
     # ORDER BY 必须出现在 JQL 末尾，拼接窗口条件前需要先移除它。
     base = re.sub(r"\border\s+by\b[\s\S]*$", "", jql, flags=re.IGNORECASE).strip()
     if not base:
