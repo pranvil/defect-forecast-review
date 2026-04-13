@@ -130,6 +130,22 @@ function formatISODate(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+/** Next calendar day as YYYY-MM-DD; for JQL `field < exclusive` so the prior day is fully included. */
+export function addCalendarDaysIso(ymd: string, deltaDays: number): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim())
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  if (
+    d.getFullYear() !== Number(m[1]) ||
+    d.getMonth() !== Number(m[2]) - 1 ||
+    d.getDate() !== Number(m[3])
+  ) {
+    return null
+  }
+  d.setDate(d.getDate() + deltaDays)
+  return formatISODate(d)
+}
+
 export function businessWeekBoundsIso(week: string): { start: string; end: string } | null {
   const parsed = parseYearWeek(week)
   if (!parsed) return null

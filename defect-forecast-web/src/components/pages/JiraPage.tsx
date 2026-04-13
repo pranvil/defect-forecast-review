@@ -36,7 +36,7 @@ export function JiraPage() {
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
-    `project = MONETNPDISH\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created <= 2026-06-30`,
+    `project = MONETNPDISH\nAND issuetype in (defect, bug)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
@@ -92,10 +92,6 @@ export function JiraPage() {
       // ignore write failure
     }
   }, [projectKey, pullMode, startDate, endDate, jql])
-
-  React.useEffect(() => {
-    if (pullMode === 'jql' && jqlParsedProjectKey) setProjectKey(jqlParsedProjectKey)
-  }, [jqlParsedProjectKey, pullMode])
 
   React.useEffect(() => {
     let cancelled = false

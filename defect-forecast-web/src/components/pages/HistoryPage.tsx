@@ -51,7 +51,7 @@ import type {
 } from '@/services/projectService'
 import { useProjectStore } from '@/stores/projectStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { businessWeekBoundsIso, firstDayDateOfWeek } from '@/utils/week'
+import { addCalendarDaysIso, businessWeekBoundsIso, firstDayDateOfWeek } from '@/utils/week'
 
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
@@ -460,8 +460,8 @@ export function HistoryPage() {
 
   const buildTeamClause = React.useCallback(
     (group: string, team: string) => {
-      const testingField = 'customfield_15319'
-      const devField = 'customfield_15320'
+      const testingField = '"Reporter Team-New"'
+      const devField = '"Assignee Team"'
       const isTesting = group === '测试提报'
       const field = isTesting ? testingField : devField
       const unknown = isTesting ? '测试未知团队' : '软件-未知团队'
@@ -472,11 +472,16 @@ export function HistoryPage() {
   )
 
   const buildFixedTimeRangeClause = React.useCallback((start: string, end: string) => {
+    const endExclusive = addCalendarDaysIso(end, 1)
+    const upper = (field: string) =>
+      endExclusive
+        ? `(${field} >= "${start}" AND ${field} < "${endExclusive}")`
+        : `(${field} >= "${start}" AND ${field} <= "${end}")`
     return [
-      `(customfield_13228 >= "${start}" AND customfield_13228 <= "${end}")`,
-      `(customfield_13221 >= "${start}" AND customfield_13221 <= "${end}")`,
-      `(customfield_13225 >= "${start}" AND customfield_13225 <= "${end}")`,
-      `(customfield_13222 >= "${start}" AND customfield_13222 <= "${end}")`,
+      upper('"last time to set verified_sw"'),
+      upper('"1st time to set closed"'),
+      upper('"1st time to set postponed"'),
+      upper('"1st time to set deleted"'),
     ].join(' OR ')
   }, [])
 
@@ -487,7 +492,11 @@ export function HistoryPage() {
       const projectClause = `project = "${escapeJqlValue(focusProject)}"`
       const teamClause = buildTeamClause(group, team)
       if (group === '测试提报') {
-        return `${projectClause} AND (${teamClause}) AND created >= "${bounds.start}" AND created <= "${bounds.end}"`
+        const createdEndExclusive = addCalendarDaysIso(bounds.end, 1)
+        const createdUpper = createdEndExclusive
+          ? `created < "${createdEndExclusive}"`
+          : `created <= "${bounds.end}"`
+        return `${projectClause} AND (${teamClause}) AND created >= "${bounds.start}" AND ${createdUpper}`
       }
       return `${projectClause} AND (${teamClause}) AND (${buildFixedTimeRangeClause(bounds.start, bounds.end)})`
     },
@@ -499,7 +508,7 @@ export function HistoryPage() {
       const projectClause = `project = "${escapeJqlValue(focusProject)}"`
       const teamClause = buildTeamClause(group, team)
       if (group === '测试提报') return `${projectClause} AND (${teamClause})`
-      return `${projectClause} AND (${teamClause}) AND (customfield_13228 is not EMPTY OR customfield_13221 is not EMPTY OR customfield_13225 is not EMPTY OR customfield_13222 is not EMPTY)`
+      return `${projectClause} AND (${teamClause}) AND ("last time to set verified_sw" is not EMPTY OR "1st time to set closed" is not EMPTY OR "1st time to set postponed" is not EMPTY OR "1st time to set deleted" is not EMPTY)`
     },
     [buildTeamClause, escapeJqlValue, focusProject],
   )
