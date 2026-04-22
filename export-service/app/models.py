@@ -256,3 +256,56 @@ class JiraFetchDebugInfo(BaseModel):
     sampleIssues: List[JiraIssueDebugRow] = Field(default_factory=list)
     error: str = ""
 
+
+class BugDistCreateTaskRequest(BaseModel):
+    primaryProjectKey: str = Field(min_length=1)
+    compareProjectKey: str = ""
+    forceRefresh: bool = False
+    baseUrl: str = Field(min_length=1)
+    authType: Literal["pat", "basic"] = "pat"
+    username: str = ""
+    token: str = Field(min_length=1)
+    verifySsl: bool = True
+    timeoutSec: int = Field(default=10, ge=3, le=60)
+
+
+class BugDistTaskProgress(BaseModel):
+    pageSize: int = 0
+    startAt: int = 0
+    fetched: int = 0
+    total: int = 0
+    message: str = ""
+
+
+class BugDistCountRow(BaseModel):
+    name: str
+    primary: int
+    compare: int
+    gap: int
+
+
+class BugDistTabResult(BaseModel):
+    rows: List[BugDistCountRow]
+    top15: List[BugDistCountRow] = Field(default_factory=list)
+
+
+class BugDistTaskResult(BaseModel):
+    primaryProjectKey: str
+    compareProjectKey: str = ""
+    generatedAt: str
+    cached: bool = False
+    module: BugDistTabResult
+    team: BugDistTabResult
+
+
+class BugDistTaskStatus(BaseModel):
+    taskId: str
+    status: Literal["running", "success", "failed"]
+    progress: BugDistTaskProgress = Field(default_factory=BugDistTaskProgress)
+    result: Optional[BugDistTaskResult] = None
+    error: str = ""
+
+
+class BugDistExportFormat(BaseModel):
+    format: Literal["csv", "xlsx"]
+

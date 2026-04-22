@@ -1,5 +1,7 @@
 import { configServiceApi } from '@/services/configService.api'
 import { configServiceMock } from '@/services/configService.mock'
+import { bugDistServiceApi } from '@/services/bugDistService'
+import { bugDistServiceMock } from '@/services/bugDistService.mock'
 import { exportServiceMock } from '@/services/exportService.mock'
 import { exportServiceReview } from '@/services/exportService.review'
 import { forecastServiceApi } from '@/services/forecastService.api'
@@ -21,6 +23,7 @@ const useMock = (() => {
 
 export const services = {
   jiraService: useMock ? jiraServiceMock : jiraServiceApi,
+  bugDistService: useMock ? bugDistServiceMock : bugDistServiceApi,
   projectService: useMock ? projectServiceMock : projectServiceApi,
   forecastService: useMock ? forecastServiceMock : forecastServiceApi,
   teamService: useMock ? teamServiceMock : teamServiceApi,

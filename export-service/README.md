@@ -23,7 +23,7 @@ py -m venv .venv
 ```
 
 服务启动后：
-http://127.0.0.1:8000/api/jira/fetch-debug/MONETNPDISH # 上次的获取的jira内容
+http://127.0.0.1:8000/api/jira/fetch-debug/MNTNPOM   # 上次的获取的jira内容
 - `POST http://127.0.0.1:8000/api/export/forecast-xlsx`
 - `GET http://127.0.0.1:8000/api/health`
 - `POST http://127.0.0.1:8000/api/jira/fetch`

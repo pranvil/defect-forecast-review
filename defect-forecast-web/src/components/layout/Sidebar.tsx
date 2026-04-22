@@ -3,6 +3,7 @@ import {
   Database,
   History,
   LayoutPanelLeft,
+  PieChart,
   Settings,
   Wand2,
 } from 'lucide-react'
@@ -12,6 +13,7 @@ const items: { key: AppSection; label: string; Icon: typeof Settings }[] = [
   { key: 'config', label: '系统配置', Icon: Settings },
   { key: 'jira', label: 'JIRA 数据获取', Icon: Database },
   { key: 'history', label: '历史项目', Icon: History },
+  { key: 'bugBoard', label: '项目bug分布', Icon: PieChart },
   { key: 'params', label: '预测参数', Icon: Wand2 },
   { key: 'forecast', label: '预测结果', Icon: BarChart3 },
 ]
@@ -23,7 +25,7 @@ type SidebarProps = {
 
 export function Sidebar({ current, onNavigate }: SidebarProps) {
   return (
-    <div className="w-64 border-r bg-white/70 backdrop-blur">
+    <div className="w-64 shrink-0 border-r bg-white/70 backdrop-blur">
       <div className="border-b p-5">
         <div className="flex items-center gap-2 text-lg font-semibold">
           <LayoutPanelLeft className="h-5 w-5" />

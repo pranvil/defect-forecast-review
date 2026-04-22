@@ -4,6 +4,7 @@ export type AppSection =
   | 'config'
   | 'jira'
   | 'history'
+  | 'bugBoard'
   | 'params'
   | 'forecast'
 

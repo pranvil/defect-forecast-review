@@ -1,0 +1,13 @@
+1. 流水线，"冒烟，全部，nO". 问题：提报的PR识别
+2. 统计一下feature PR数量选 top key feature
+3. 用户可以选参考指标
+4. 测试完成率删除
+5. DRP预测结果导入功能。
+6. DRP 多个预测结果管理。
+7. clone PR排除，通过summary排， MAIN2MP,MP2SMR
+8. 权重设计
+9. project = SECPROINF ORDER BY priority ASC, updated DESC 查看项目时间
+
+
+
+project in (MNTNPOM, GF5GBBH, BELLONAGLOSUP, A01, ADAM, APGLOSUP, BAMB, BELLONAGL, BEBBH, C3FSE, DAHMAX, FRIDA, GF5GTMO, GPCS, GCHPCSV, GPDISH, GPDISHOSUP, GPGLUP, GPUP, GPGL, GCHTMO, GCHTMOV, HERMESVISION, HERMES, METIS, MONALISAOSUPGRADE, MNTGL, MNTNPGL, MNTNPDH, MONETTF, MONETVZW, N5DET, NOA1, OPTSOSUP, OGV, SLCAN, SELENEATT, SOC16MT6835NA, SWIFT, SWNAOM, SWGTMO, THYME, VINCA) AND issuetype = Defect AND status = "More info" ORDER BY created DESC, key DESC, priority DESC, updated DESC

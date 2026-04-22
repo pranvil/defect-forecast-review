@@ -5,7 +5,7 @@ import json
 import logging
 import ssl
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -148,6 +148,67 @@ def search_issues(req: JiraFetchRequest, bounded_jql: str, fields: Iterable[str]
             break
         start_at += len(issues)
     return out
+
+
+def search_issues_paged(
+    req: JiraFetchRequest,
+    jql: str,
+    fields: Iterable[str] | None = None,
+    page_sizes: Iterable[int] | None = None,
+    on_progress: Callable[[int, int, int, int], None] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    分页拉取 Jira issues（按 startAt/maxResults），并支持在实例限制下自动降级分页大小。
+
+    on_progress(start_at, page_size, fetched, total) 可用于前端展示进度。
+    """
+    if req.authType == "basic" and not req.username.strip():
+        raise ValueError("Basic Auth 需要用户名")
+    ctx = _context_from_fetch(req)
+    target = urllib.parse.urljoin(f"{ctx.base_url}/", "rest/api/2/search")
+    field_names = _build_field_names(fields)
+    candidates = [5000, 1000, 200] if page_sizes is None else [int(x) for x in page_sizes if int(x) > 0]
+    last_error: Exception | None = None
+    for max_results in candidates:
+        start_at = 0
+        total: int | None = None
+        out: list[dict[str, Any]] = []
+        try:
+            while total is None or start_at < total:
+                body = {
+                    "jql": jql,
+                    "fields": field_names,
+                    "maxResults": max_results,
+                    "startAt": start_at,
+                }
+                data = _do_json_request(ctx, target, body)
+                issues = data.get("issues")
+                if not isinstance(issues, list):
+                    break
+                for issue in issues:
+                    if isinstance(issue, dict):
+                        out.append(issue)
+                total_val = data.get("total")
+                if isinstance(total_val, int):
+                    total = total_val
+                else:
+                    total = start_at + len(issues)
+                if on_progress:
+                    on_progress(start_at, max_results, len(out), total or 0)
+                if len(issues) < max_results:
+                    break
+                start_at += len(issues)
+            if on_progress:
+                on_progress(start_at, max_results, len(out), total or len(out))
+            return out
+        except ValueError as e:
+            # 常见原因：maxResults 超上限、JQL/字段权限问题等。若是分页大小导致的，后续候选会更小。
+            last_error = e
+            logger.warning("jira paged search failed, page_size=%s, error=%s", max_results, str(e)[:200])
+            continue
+    if last_error:
+        raise last_error
+    return []
 
 
 def test_jira_connection(req: JiraConnectionTestRequest) -> JiraConnectionTestResult:

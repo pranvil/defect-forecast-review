@@ -6,11 +6,14 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi import HTTPException
 from fastapi.staticfiles import StaticFiles
 
+from app.bug_dist import create_task as create_bug_dist_task
+from app.bug_dist import export_tab_as_csv, export_tab_as_xlsx, get_task_status as get_bug_dist_task_status
 from app.db import backup_database, get_db_path, migrate
 from app.excel.fill_forecast import fill_forecast_into_template
 from app.excel.template_io import load_template_workbook, workbook_to_bytes
@@ -39,6 +42,8 @@ from app.logic import (
     upsert_cached_projects,
 )
 from app.models import (
+    BugDistCreateTaskRequest,
+    BugDistTaskStatus,
     CompareColorsConfig,
     CompareResponse,
     ExportError,
@@ -263,6 +268,49 @@ def export_forecast_xlsx(req: ExportForecastRequest):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.post("/api/bug-dist/tasks", response_model=dict[str, str])
+def bug_dist_create_task(req: BugDistCreateTaskRequest) -> dict[str, str]:
+    task_id = create_bug_dist_task(req)
+    return {"taskId": task_id}
+
+
+@app.get("/api/bug-dist/tasks/{task_id}", response_model=BugDistTaskStatus)
+def bug_dist_task_status(task_id: str) -> BugDistTaskStatus:
+    return get_bug_dist_task_status(task_id)
+
+
+@app.get("/api/bug-dist/export")
+def bug_dist_export(
+    taskId: str = Query(min_length=1),
+    tab: str = Query("module"),
+    format: str = Query("csv"),
+):
+    status = get_bug_dist_task_status(taskId)
+    if status.status != "success" or not status.result:
+        raise HTTPException(status_code=400, detail="任务尚未完成，无法导出")
+    normalized_tab = tab.strip().lower()
+    if normalized_tab not in ("module", "team"):
+        raise HTTPException(status_code=400, detail="tab 参数必须为 module 或 team")
+    normalized_format = format.strip().lower()
+    if normalized_format == "csv":
+        data = export_tab_as_csv(status.result, normalized_tab)  # type: ignore[arg-type]
+        filename = f"bug-dist.{status.result.primaryProjectKey}.{normalized_tab}.{date.today().isoformat()}.csv"
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    if normalized_format == "xlsx":
+        data = export_tab_as_xlsx(status.result, normalized_tab)  # type: ignore[arg-type]
+        filename = f"bug-dist.{status.result.primaryProjectKey}.{normalized_tab}.{date.today().isoformat()}.xlsx"
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    raise HTTPException(status_code=400, detail="format 参数必须为 csv 或 xlsx")
 
 
 @app.get("/", include_in_schema=False)
