@@ -89,6 +89,16 @@ if WEB_ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(WEB_ASSETS_DIR)), name="assets")
 
 
+def _index_html_response() -> FileResponse:
+    resp = FileResponse(str(WEB_DIST_INDEX))
+    # Avoid stale UI in browsers (notably Chrome) after packaging/upgrades.
+    # Assets are fingerprinted; index.html must be revalidated.
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     log_file = configure_logging()
@@ -316,7 +326,7 @@ def bug_dist_export(
 @app.get("/", include_in_schema=False)
 def web_root():
     if WEB_DIST_INDEX.exists():
-        return FileResponse(str(WEB_DIST_INDEX))
+        return _index_html_response()
     raise HTTPException(status_code=404, detail="Web UI not bundled")
 
 
@@ -330,7 +340,7 @@ def web_spa_fallback(full_path: str):
         if candidate.exists() and candidate.is_file():
             return FileResponse(str(candidate))
         if WEB_DIST_INDEX.exists():
-            return FileResponse(str(WEB_DIST_INDEX))
+            return _index_html_response()
 
     raise HTTPException(status_code=404, detail="Not found")
 
