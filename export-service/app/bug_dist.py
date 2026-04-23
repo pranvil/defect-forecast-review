@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import threading
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
@@ -13,7 +14,7 @@ from uuid import uuid4
 
 import pandas as pd
 
-from app.db import DEFAULT_DATA_DIR, ensure_data_dir
+from app.db import DEFAULT_DATA_DIR, ensure_data_dir, get_conn
 from app.jira_client import search_issues_paged
 from app.models import (
     BugDistCountRow,
@@ -28,7 +29,7 @@ from app.models import (
 logger = logging.getLogger("drp.bug_dist")
 
 BUG_DIST_CACHE_DIRNAME = "bug_dist_cache"
-BUG_DIST_FIELD_VERSION = "components/customfield_15319"
+BUG_DIST_FIELD_VERSION = "issue-fact-v1"
 
 
 def _utcnow_iso() -> str:
@@ -49,11 +50,20 @@ def _hash_key(text: str) -> str:
 def _cache_key(req: BugDistCreateTaskRequest, project_key: str) -> str:
     base = req.baseUrl.strip().rstrip("/").lower()
     compare = (req.compareProjectKey or "").strip().upper()
+    local_state = {
+        "primarySnapshot": _project_snapshot_version(project_key.strip().upper()),
+        "compareSnapshot": _project_snapshot_version(compare) if compare else "",
+    }
     payload = {
         "baseUrl": base,
         "projectKey": project_key.strip().upper(),
         "compareProjectKey": compare,
+        "startDate": req.startDate.strip(),
+        "endDate": req.endDate.strip(),
         "fieldVersion": BUG_DIST_FIELD_VERSION,
+        "teamFieldPath": req.teamFieldPath.strip() or "customfield_15319",
+        "issueTypeClause": req.issueTypeClause.strip() or 'issuetype in (defect, defect_new)',
+        "localState": local_state,
     }
     return _hash_key(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
@@ -100,8 +110,8 @@ def _jira_fetch_req_from_bug_req(req: BugDistCreateTaskRequest, project_key: str
         endWeek="",
         pullMode="jql",
         jql="",
-        startDate="",
-        endDate="",
+        startDate=req.startDate.strip(),
+        endDate=req.endDate.strip(),
         mode="normal",
         baseUrl=req.baseUrl,
         authType=req.authType,
@@ -110,6 +120,60 @@ def _jira_fetch_req_from_bug_req(req: BugDistCreateTaskRequest, project_key: str
         verifySsl=req.verifySsl,
         timeoutSec=req.timeoutSec,
     )
+
+
+def _parse_iso_date(raw: str) -> datetime | None:
+    value = raw.strip()
+    if not value:
+        return None
+    candidates = (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    )
+    for fmt in candidates:
+        try:
+            parsed = datetime.strptime(value, fmt)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            continue
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _is_created_in_range(created_at: str, start_date: str, end_date: str) -> bool:
+    start = start_date.strip()
+    end = end_date.strip()
+    if not start and not end:
+        return True
+    parsed = _parse_iso_date(created_at)
+    if not parsed:
+        return False
+    created_day = parsed.date().isoformat()
+    if start and created_day < start:
+        return False
+    if end and created_day > end:
+        return False
+    return True
+
+
+def _build_bug_dist_jql(project_key: str, issue_type_clause: str, start_date: str, end_date: str) -> str:
+    clauses: list[str] = [f'project = "{project_key}"', issue_type_clause]
+    start = start_date.strip()
+    end = end_date.strip()
+    if start:
+        clauses.append(f'created >= "{start}"')
+    if end:
+        clauses.append(f'created <= "{end}"')
+    return " AND ".join(clauses) + " ORDER BY created DESC"
 
 
 def _extract_module(issue: dict[str, Any]) -> str:
@@ -128,11 +192,11 @@ def _extract_module(issue: dict[str, Any]) -> str:
     return "(None)"
 
 
-def _extract_reporter_team(issue: dict[str, Any]) -> str:
+def _extract_reporter_team(issue: dict[str, Any], team_field_path: str) -> str:
     fields = issue.get("fields") if isinstance(issue, dict) else None
     if not isinstance(fields, dict):
         return "(Empty)"
-    raw = fields.get("customfield_15319")
+    raw = fields.get(team_field_path)
     if not isinstance(raw, dict):
         return "(Empty)"
     value = raw.get("value")
@@ -141,44 +205,119 @@ def _extract_reporter_team(issue: dict[str, Any]) -> str:
     return "(Empty)"
 
 
-def _to_counts_df(issues: list[dict[str, Any]]) -> pd.DataFrame:
-    rows = [{"module": _extract_module(i), "team": _extract_reporter_team(i)} for i in issues]
-    return pd.DataFrame(rows)
+def _build_counters_from_remote_issues(issues: list[dict[str, Any]], team_field_path: str) -> tuple[Counter[str], Counter[str], int]:
+    module_counter: Counter[str] = Counter()
+    team_counter: Counter[str] = Counter()
+    for issue in issues:
+        team_counter[_extract_reporter_team(issue, team_field_path)] += 1
+        fields = issue.get("fields") if isinstance(issue, dict) else None
+        components = fields.get("components") if isinstance(fields, dict) else None
+        names: list[str] = []
+        if isinstance(components, list):
+            for item in components:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                    if isinstance(name, str) and name.strip():
+                        names.append(name.strip())
+        if not names:
+            names = ["(None)"]
+        for name in dict.fromkeys(names):
+            module_counter[name] += 1
+    return module_counter, team_counter, len(issues)
 
 
-def _align_counts(
-    primary: pd.Series,
-    compare: pd.Series | None,
-) -> list[BugDistCountRow]:
-    p = primary.astype("int64")
-    c = (compare.astype("int64") if compare is not None else pd.Series(dtype="int64"))
-    df = pd.DataFrame({"primary": p, "compare": c}).fillna(0).astype("int64")
-    df["gap"] = df["compare"] - df["primary"]
-    df = df.reset_index(names=["name"])
-    # 主项目降序；主项目为 0 的（副项目多出项）统一排在最后，再按 compare 降序
-    df["__p0"] = (df["primary"] == 0).astype("int64")
-    df = df.sort_values(by=["__p0", "primary", "compare", "name"], ascending=[True, False, False, True])
-    out: list[BugDistCountRow] = []
-    for row in df.itertuples(index=False):
-        out.append(
-            BugDistCountRow(
-                name=str(row.name),
-                primary=int(row.primary),
-                compare=int(row.compare),
-                gap=int(row.gap),
-            )
+def _project_snapshot_version(project_key: str) -> str:
+    if not project_key:
+        return ""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT issue_snapshot_version, last_sync_at FROM project_import_state WHERE project_key = ?",
+            (project_key,),
+        ).fetchone()
+    if not row:
+        return ""
+    return str(row["issue_snapshot_version"] or row["last_sync_at"] or "")
+
+
+def _build_counters_from_local(project_key: str, *, start_date: str = "", end_date: str = "") -> tuple[Counter[str], Counter[str], int]:
+    normalized = project_key.strip().upper()
+    if not normalized:
+        return Counter(), Counter(), 0
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT i.issue_key, i.reporter_team, c.component_name, c.component_order
+                   , i.created_at
+            FROM jira_issue i
+            LEFT JOIN jira_issue_component c ON c.issue_key = i.issue_key
+            WHERE i.project_key = ? AND IFNULL(i.removed_at, '') = ''
+            ORDER BY i.issue_key ASC, c.component_order ASC, c.component_name ASC
+            """,
+            (normalized,),
+        ).fetchall()
+    if not rows:
+        return Counter(), Counter(), 0
+
+    module_counter: Counter[str] = Counter()
+    team_counter: Counter[str] = Counter()
+    issue_count = 0
+    current_key = ""
+    current_team = ""
+    current_created_at = ""
+    current_components: list[str] = []
+
+    def flush() -> None:
+        nonlocal issue_count, current_key, current_team, current_components, current_created_at
+        if not current_key:
+            return
+        if not _is_created_in_range(current_created_at, start_date, end_date):
+            current_key = ""
+            current_team = ""
+            current_created_at = ""
+            current_components = []
+            return
+        issue_count += 1
+        team_counter[current_team or "(Empty)"] += 1
+        modules = current_components or ["(None)"]
+        for name in dict.fromkeys(modules):
+            module_counter[name] += 1
+        current_key = ""
+        current_team = ""
+        current_created_at = ""
+        current_components = []
+
+    for row in rows:
+        issue_key = str(row["issue_key"] or "")
+        if issue_key != current_key:
+            flush()
+            current_key = issue_key
+            current_team = str(row["reporter_team"] or "").strip()
+            current_created_at = str(row["created_at"] or "").strip()
+        component_name = str(row["component_name"] or "").strip()
+        if component_name:
+            current_components.append(component_name)
+    flush()
+    return module_counter, team_counter, issue_count
+
+
+def _align_counts(primary: Counter[str], compare: Counter[str] | None) -> list[BugDistCountRow]:
+    compare_counter = compare or Counter()
+    names = sorted(set(primary.keys()) | set(compare_counter.keys()))
+    rows = [
+        BugDistCountRow(
+            name=name,
+            primary=int(primary.get(name, 0)),
+            compare=int(compare_counter.get(name, 0)),
+            gap=int(compare_counter.get(name, 0) - primary.get(name, 0)),
         )
-    return out
+        for name in names
+    ]
+    rows.sort(key=lambda row: (row.primary == 0, -row.primary, -row.compare, row.name))
+    return rows
 
 
-def _build_tab_result(primary_df: pd.DataFrame, compare_df: pd.DataFrame | None, kind: Literal["module", "team"]) -> BugDistTabResult:
-    if kind == "module":
-        p = primary_df.groupby("module").size()
-        c = compare_df.groupby("module").size() if compare_df is not None else None
-    else:
-        p = primary_df.groupby("team").size()
-        c = compare_df.groupby("team").size() if compare_df is not None else None
-    rows = _align_counts(p, c)
+def _build_tab_result(primary_counts: Counter[str], compare_counts: Counter[str] | None) -> BugDistTabResult:
+    rows = _align_counts(primary_counts, compare_counts)
     top15 = rows[:15]
     return BugDistTabResult(rows=rows, top15=top15)
 
@@ -255,6 +394,10 @@ def _set_failed(task_id: str, error: str) -> None:
 def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
     primary_key = req.primaryProjectKey.strip().upper()
     compare_key = req.compareProjectKey.strip().upper() if req.compareProjectKey.strip() else ""
+    team_field_path = req.teamFieldPath.strip() or "customfield_15319"
+    issue_type_clause = req.issueTypeClause.strip() or 'issuetype in (defect, defect_new)'
+    start_date = req.startDate.strip()
+    end_date = req.endDate.strip()
     try:
         if not req.forceRefresh:
             cached = _read_cache(req, primary_key)
@@ -263,42 +406,55 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
                 _set_done(task_id, cached, cached=True)
                 return
 
-        def progress_cb(start_at: int, page_size: int, fetched: int, total: int):
-            _set_progress(task_id, start_at=start_at, page_size=page_size, fetched=fetched, total=total, message="拉取主项目中…")
-
-        jira_req = _jira_fetch_req_from_bug_req(req, primary_key)
-        jql = f'project = "{primary_key}" AND issuetype = Defect ORDER BY created DESC'
-        primary_issues = search_issues_paged(
-            jira_req,
-            jql=jql,
-            fields=["components", "customfield_15319"],
-            page_sizes=[5000, 1000, 200],
-            on_progress=progress_cb,
+        _set_progress(task_id, start_at=0, page_size=0, fetched=0, total=0, message="读取本地项目事实数据…")
+        primary_module_counts, primary_team_counts, primary_issue_n = _build_counters_from_local(
+            primary_key,
+            start_date=start_date,
+            end_date=end_date,
         )
-        primary_df = _to_counts_df(primary_issues)
-        primary_issue_n = len(primary_issues)
+        if primary_issue_n <= 0:
+            def progress_cb(start_at: int, page_size: int, fetched: int, total: int):
+                _set_progress(task_id, start_at=start_at, page_size=page_size, fetched=fetched, total=total, message="主项目本地无数据，回退 Jira 拉取中…")
 
-        compare_df: pd.DataFrame | None = None
+            jira_req = _jira_fetch_req_from_bug_req(req, primary_key)
+            jql = _build_bug_dist_jql(primary_key, issue_type_clause, start_date, end_date)
+            primary_issues = search_issues_paged(
+                jira_req,
+                jql=jql,
+                fields=["components", team_field_path],
+                page_sizes=[5000, 1000, 200],
+                on_progress=progress_cb,
+            )
+            primary_module_counts, primary_team_counts, primary_issue_n = _build_counters_from_remote_issues(primary_issues, team_field_path)
+
+        compare_module_counts: Counter[str] | None = None
+        compare_team_counts: Counter[str] | None = None
         compare_issue_n = 0
         if compare_key:
-            def progress_cb2(start_at: int, page_size: int, fetched: int, total: int):
-                _set_progress(task_id, start_at=start_at, page_size=page_size, fetched=fetched, total=total, message="拉取对比项目中…")
-
-            jira_req2 = _jira_fetch_req_from_bug_req(req, compare_key)
-            jql2 = f'project = "{compare_key}" AND issuetype = Defect ORDER BY created DESC'
-            compare_issues = search_issues_paged(
-                jira_req2,
-                jql=jql2,
-                fields=["components", "customfield_15319"],
-                page_sizes=[5000, 1000, 200],
-                on_progress=progress_cb2,
+            _set_progress(task_id, start_at=0, page_size=0, fetched=0, total=0, message="读取对比项目本地事实数据…")
+            compare_module_counts, compare_team_counts, compare_issue_n = _build_counters_from_local(
+                compare_key,
+                start_date=start_date,
+                end_date=end_date,
             )
-            compare_df = _to_counts_df(compare_issues)
-            compare_issue_n = len(compare_issues)
+            if compare_issue_n <= 0:
+                def progress_cb2(start_at: int, page_size: int, fetched: int, total: int):
+                    _set_progress(task_id, start_at=start_at, page_size=page_size, fetched=fetched, total=total, message="对比项目本地无数据，回退 Jira 拉取中…")
 
-        _set_progress(task_id, start_at=0, page_size=0, fetched=len(primary_df), total=len(primary_df), message="聚合统计中…")
-        module_res = _build_tab_result(primary_df, compare_df, "module")
-        team_res = _build_tab_result(primary_df, compare_df, "team")
+                jira_req2 = _jira_fetch_req_from_bug_req(req, compare_key)
+                jql2 = _build_bug_dist_jql(compare_key, issue_type_clause, start_date, end_date)
+                compare_issues = search_issues_paged(
+                    jira_req2,
+                    jql=jql2,
+                    fields=["components", team_field_path],
+                    page_sizes=[5000, 1000, 200],
+                    on_progress=progress_cb2,
+                )
+                compare_module_counts, compare_team_counts, compare_issue_n = _build_counters_from_remote_issues(compare_issues, team_field_path)
+
+        _set_progress(task_id, start_at=0, page_size=0, fetched=primary_issue_n, total=primary_issue_n, message="聚合统计中…")
+        module_res = _build_tab_result(primary_module_counts, compare_module_counts)
+        team_res = _build_tab_result(primary_team_counts, compare_team_counts)
         result = BugDistTaskResult(
             primaryProjectKey=primary_key,
             compareProjectKey=compare_key,
@@ -330,4 +486,3 @@ def export_tab_as_xlsx(result: BugDistTaskResult, tab: Literal["module", "team"]
         sheet = "module" if tab == "module" else "team"
         df.to_excel(writer, index=False, sheet_name=sheet)
     return bio.getvalue()
-

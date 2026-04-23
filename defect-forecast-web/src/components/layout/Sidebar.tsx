@@ -1,21 +1,17 @@
 import {
   BarChart3,
-  Database,
-  History,
   LayoutPanelLeft,
-  PieChart,
+  FolderKanban,
   Settings,
   Wand2,
 } from 'lucide-react'
 import type { AppSection } from '@/stores/projectStore'
 
 const items: { key: AppSection; label: string; Icon: typeof Settings }[] = [
+  { key: 'projectHub', label: '项目库', Icon: FolderKanban },
+  { key: 'forecastInput', label: '新项目预测', Icon: Wand2 },
+  { key: 'forecastResult', label: '预测结果', Icon: BarChart3 },
   { key: 'config', label: '系统配置', Icon: Settings },
-  { key: 'jira', label: 'JIRA 数据获取', Icon: Database },
-  { key: 'history', label: '历史项目', Icon: History },
-  { key: 'bugBoard', label: '项目bug分布', Icon: PieChart },
-  { key: 'params', label: '预测参数', Icon: Wand2 },
-  { key: 'forecast', label: '预测结果', Icon: BarChart3 },
 ]
 
 type SidebarProps = {

@@ -23,10 +23,11 @@ export interface JiraFetchResult {
   fetchedCount: number
   writtenCount: number
   status: 'success' | 'failed'
+  periodStart?: string
+  periodEnd?: string
 }
 
 export interface JiraService {
   fetchByJql(req: JiraFetchRequest): Promise<JiraFetchResult>
   listCachedProjects(): Promise<ProjectSummary[]>
 }
-

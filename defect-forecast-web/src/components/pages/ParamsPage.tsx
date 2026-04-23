@@ -29,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { services } from '@/services'
+import { ProjectPicker } from '@/components/common/ProjectPicker'
 import { useForecastStore } from '@/stores/forecastStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTeamStore } from '@/stores/teamStore'
@@ -41,6 +42,7 @@ import {
   normalizeMilestoneDateToIso,
   parseIsoDateLocal,
 } from '@/utils/week'
+import { formatProjectLabel } from '@/utils/projectLibrary'
 import {
   Dialog,
   DialogContent,
@@ -124,6 +126,14 @@ export function ParamsPage() {
   const [projectCycleByName, setProjectCycleByName] = React.useState<Record<string, string>>({})
   const [projectDisplayNameByKey, setProjectDisplayNameByKey] = React.useState<Record<string, string>>({})
   const [allProjects, setAllProjects] = React.useState<string[]>([])
+  const projectPickerOptions = React.useMemo(
+    () =>
+      allProjects.map((projectKey) => ({
+        key: projectKey,
+        displayName: projectDisplayNameByKey[projectKey],
+      })),
+    [allProjects, projectDisplayNameByKey],
+  )
   const milestoneFileInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
@@ -206,7 +216,7 @@ export function ParamsPage() {
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, 4)
     if (!byScore.length) {
-      toast('暂无可识别项目', { description: '请先在历史项目中准备缓存项目' })
+      toast('暂无可识别项目', { description: '请先在项目库中准备缓存项目' })
       return
     }
     useForecastStore.getState().setRefProjects(byScore)
@@ -216,7 +226,7 @@ export function ParamsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold">预测参数</h2>
+        <h2 className="text-2xl font-semibold">新项目预测</h2>
         <p className="mt-1 text-sm text-slate-500">
           先填基础参数，再自动识别相似项目或手工维护参考项目；节点信息也作为基础参数单独维护。
         </p>
@@ -230,7 +240,7 @@ export function ParamsPage() {
               <Button
                 type="button"
                 className="rounded-2xl px-6"
-                onClick={() => setActiveSection('forecast')}
+                onClick={() => setActiveSection('forecastResult')}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 开始预测
@@ -353,9 +363,7 @@ export function ParamsPage() {
                 {refProjects.map((row) => (
                   <TableRow key={row.project}>
                     <TableCell className="font-medium">
-                      {projectDisplayNameByKey[row.project]
-                        ? `${projectDisplayNameByKey[row.project]}（${row.project}）`
-                        : row.project}
+                      {formatProjectLabel(row.project, projectDisplayNameByKey[row.project])}
                     </TableCell>
                     <TableCell>
                       {projectCycleByName[row.project] ?? '26W?-26W?'}
@@ -626,13 +634,13 @@ export function ParamsPage() {
           </DialogHeader>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
-              <Label>项目名</Label>
-              <Input
+              <ProjectPicker
+                label="项目名"
                 value={refDraft.project}
-                onChange={(e) =>
-                  setRefDraft((s) => ({ ...s, project: e.target.value }))
-                }
+                onChange={(value) => setRefDraft((s) => ({ ...s, project: value }))}
+                options={projectPickerOptions}
                 placeholder="例如 Monet NP Dish"
+                searchPlaceholder="搜索项目库中的项目"
               />
             </div>
             <div className="space-y-2">
@@ -1025,12 +1033,12 @@ export function ParamsPage() {
           </DialogHeader>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
-              <Label>项目名</Label>
-              <Input
+              <ProjectPicker
+                label="项目名"
                 value={refEditDraft.project}
-                onChange={(e) =>
-                  setRefEditDraft((s) => ({ ...s, project: e.target.value }))
-                }
+                onChange={(value) => setRefEditDraft((s) => ({ ...s, project: value }))}
+                options={projectPickerOptions}
+                searchPlaceholder="搜索项目库中的项目"
               />
             </div>
             <div className="space-y-2">

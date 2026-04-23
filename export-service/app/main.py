@@ -18,28 +18,30 @@ from app.db import backup_database, get_db_path, migrate
 from app.excel.fill_forecast import fill_forecast_into_template
 from app.excel.template_io import load_template_workbook, workbook_to_bytes
 from app.jira_client import test_jira_connection
-from app.logic import (
+from app.issue_fact import (
     build_compare,
     delete_cached_project,
+    get_jira_fetch_debug,
+    get_project_history,
+    jira_sync,
+    list_project_summaries,
+    record_jira_fetch_error,
+    upsert_cached_projects,
+)
+from app.logic import (
     ensure_seed_data,
     generate_forecast,
     get_compare_colors,
     get_field_mappings,
     get_forecast_defaults,
-    get_jira_fetch_debug,
-    get_project_history,
-    jira_sync,
     list_teams,
     list_forecast_versions,
-    list_project_summaries,
-    record_jira_fetch_error,
     save_compare_colors,
     save_field_mappings,
     save_forecast_defaults,
     save_forecast_version,
     save_teams,
     soft_delete_forecast_version,
-    upsert_cached_projects,
 )
 from app.models import (
     BugDistCreateTaskRequest,
@@ -131,6 +133,10 @@ def jira_fetch(req: JiraFetchRequest) -> JiraFetchResult:
     except ValueError as e:
         record_jira_fetch_error(req, str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("jira fetch unexpected error, project=%s", req.projectKey)
+        record_jira_fetch_error(req, f"服务异常: {e}")
+        raise HTTPException(status_code=500, detail="Jira 拉取过程中发生服务异常，请稍后重试")
 
 
 @app.get("/api/jira/fetch-debug/{project_key}", response_model=JiraFetchDebugInfo)
@@ -343,4 +349,3 @@ def web_spa_fallback(full_path: str):
             return _index_html_response()
 
     raise HTTPException(status_code=404, detail="Not found")
-

@@ -133,8 +133,63 @@ def migrate() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS jira_issue (
+              issue_key TEXT PRIMARY KEY,
+              project_key TEXT NOT NULL,
+              issue_type TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL DEFAULT '',
+              resolved_at TEXT NOT NULL DEFAULT '',
+              verified_sw_at TEXT NOT NULL DEFAULT '',
+              closed_at TEXT NOT NULL DEFAULT '',
+              postponed_at TEXT NOT NULL DEFAULT '',
+              deleted_at TEXT NOT NULL DEFAULT '',
+              removed_at TEXT NOT NULL DEFAULT '',
+              reporter_team TEXT NOT NULL DEFAULT '',
+              assignee_team TEXT NOT NULL DEFAULT '',
+              raw_fields_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        jira_issue_cols = {row["name"] for row in conn.execute("PRAGMA table_info(jira_issue)").fetchall()}
+        if "removed_at" not in jira_issue_cols:
+            conn.execute("ALTER TABLE jira_issue ADD COLUMN removed_at TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jira_issue_component (
+              issue_key TEXT NOT NULL,
+              component_name TEXT NOT NULL,
+              component_order INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (issue_key, component_name)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_import_state (
+              project_key TEXT PRIMARY KEY,
+              last_sync_at TEXT NOT NULL DEFAULT '',
+              last_full_sync_at TEXT NOT NULL DEFAULT '',
+              last_incremental_sync_at TEXT NOT NULL DEFAULT '',
+              last_mode TEXT NOT NULL DEFAULT '',
+              last_request_kind TEXT NOT NULL DEFAULT '',
+              last_jql TEXT NOT NULL DEFAULT '',
+              field_mapping_version TEXT NOT NULL DEFAULT '',
+              issue_snapshot_version TEXT NOT NULL DEFAULT '',
+              issue_count INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jira_issue_project_key ON jira_issue(project_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jira_issue_created_at ON jira_issue(project_key, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jira_issue_resolved_at ON jira_issue(project_key, resolved_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jira_issue_component_issue_key ON jira_issue_component(issue_key)")
+        conn.execute(
+            """
             INSERT OR REPLACE INTO schema_meta(key, value)
-            VALUES('schema_version', '2')
+            VALUES('schema_version', '3')
             """
         )
 

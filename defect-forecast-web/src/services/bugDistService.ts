@@ -4,6 +4,10 @@ export interface BugDistCreateTaskRequest {
   primaryProjectKey: string
   compareProjectKey: string
   forceRefresh: boolean
+  startDate?: string
+  endDate?: string
+  teamFieldPath?: string
+  issueTypeClause?: string
   baseUrl: string
   authType: 'pat' | 'basic'
   username: string
@@ -77,4 +81,3 @@ export const bugDistServiceApi: BugDistService = {
     return `${API_BASE}/api/bug-dist/export?${query.toString()}`
   },
 }
-

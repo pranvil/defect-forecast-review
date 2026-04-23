@@ -29,12 +29,18 @@ import { extractProjectKeyFromJql } from '@/utils/jiraJql'
 import { toBusinessWeekLabel } from '@/utils/week'
 
 const JIRA_FETCH_FORM_KEY = 'drp.jira.fetch.form.v1'
+const JIRA_FETCH_LAST_RESULT_KEY = 'drp.jira.fetch.last-result.v1'
 const DEFAULT_PROJECT_KEY = 'MNTNPOM'
 
-export function JiraPage() {
+type JiraPageProps = {
+  embedded?: boolean
+}
+
+export function JiraPage({ embedded = false }: JiraPageProps) {
   const [cachedProjects, setCachedProjects] = React.useState<ProjectSummary[]>([])
   const [projectKey, setProjectKey] = React.useState(DEFAULT_PROJECT_KEY)
   const [projectDisplayName, setProjectDisplayName] = React.useState('')
+  const [showAdvanced, setShowAdvanced] = React.useState(false)
   const [pullMode, setPullMode] = React.useState<'jql' | 'projectStart'>('jql')
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
@@ -45,7 +51,8 @@ export function JiraPage() {
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
   const [isFormHydrated, setIsFormHydrated] = React.useState(false)
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
-  const setActiveSection = useProjectStore((s) => s.setActiveSection)
+  const openProjectDetail = useProjectStore((s) => s.openProjectDetail)
+  const openProjectHub = useProjectStore((s) => s.openProjectHub)
   const selectedProjects = useProjectStore((s) => s.selectedProjects)
   const setSelectedProjects = useProjectStore((s) => s.setSelectedProjects)
   const setFocusProject = useProjectStore((s) => s.setFocusProject)
@@ -87,6 +94,31 @@ export function JiraPage() {
       // ignore malformed local cache
     } finally {
       setIsFormHydrated(true)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(JIRA_FETCH_LAST_RESULT_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Partial<JiraFetchResult>
+      if (!parsed || typeof parsed !== 'object') return
+      if (typeof parsed.syncedAt !== 'string') return
+      if (typeof parsed.status !== 'string') return
+      if (typeof parsed.fetchedCount !== 'number') return
+      if (typeof parsed.writtenCount !== 'number') return
+      if (typeof parsed.cycleLabel !== 'string') return
+      setLastResult({
+        syncedAt: parsed.syncedAt,
+        cycleLabel: parsed.cycleLabel,
+        fetchedCount: parsed.fetchedCount,
+        writtenCount: parsed.writtenCount,
+        status: parsed.status === 'success' ? 'success' : 'failed',
+        periodStart: typeof parsed.periodStart === 'string' ? parsed.periodStart : '',
+        periodEnd: typeof parsed.periodEnd === 'string' ? parsed.periodEnd : '',
+      })
+    } catch {
+      // ignore malformed local cache
     }
   }, [])
 
@@ -133,6 +165,76 @@ export function JiraPage() {
     setCachedProjects(rows)
   }
 
+  const persistLastResult = React.useCallback((res: JiraFetchResult) => {
+    setLastResult(res)
+    try {
+      localStorage.setItem(JIRA_FETCH_LAST_RESULT_KEY, JSON.stringify(res))
+    } catch {
+      // ignore write failure
+    }
+  }, [])
+
+  const resolvePeriodLabel = React.useCallback((res: JiraFetchResult | null): string => {
+    if (!res) return '-'
+    if (res.periodStart && res.periodEnd) {
+      return `${new Date(res.periodStart).toLocaleString()} - ${new Date(res.periodEnd).toLocaleString()}`
+    }
+    return res.cycleLabel || '-'
+  }, [])
+
+  const finishSync = async (keyForRequest: string, res: JiraFetchResult, modeLabel: string) => {
+    persistLastResult(res)
+    await services.projectService.upsertCachedProjects([
+      {
+        name: keyForRequest,
+        displayName: projectDisplayName.trim() ? projectDisplayName.trim() : undefined,
+        cycle: res.cycleLabel.replace(' - ', '-'),
+        defects: res.fetchedCount,
+        teams: Math.max(1, Math.round(res.fetchedCount / 200)),
+      },
+    ])
+    await refreshCache()
+    toast('同步成功', {
+      description: `${modeLabel}，共同步 ${res.fetchedCount} 条 Defect`,
+    })
+  }
+
+  const runFullSync = async () => {
+    const keyForRequest = projectKey.trim().toUpperCase()
+    if (!keyForRequest) {
+      toast('同步失败', { description: '请填写项目 Key' })
+      return
+    }
+    setIsFetching(true)
+    try {
+      const res = await services.jiraService.fetchByJql({
+        projectKey: keyForRequest,
+        startWeek: '',
+        endWeek: '',
+        pullMode: 'projectStart',
+        jql: '',
+        startDate: '',
+        endDate: '',
+        mode: 'normal',
+        ...jiraConnection,
+      })
+      await finishSync(keyForRequest, res, '已完成全量历史同步')
+    } catch (e: unknown) {
+      persistLastResult({
+        syncedAt: new Date().toISOString(),
+        cycleLabel: '',
+        fetchedCount: 0,
+        writtenCount: 0,
+        status: 'failed',
+        periodStart: '',
+        periodEnd: '',
+      })
+      toast('同步失败', { description: e instanceof Error ? e.message : '服务调用失败' })
+    } finally {
+      setIsFetching(false)
+    }
+  }
+
   const runFetch = async (mode: 'normal' | 'incremental' | 'overwrite') => {
     if (pullMode === 'jql' && !jql.trim()) {
       toast('同步失败', { description: '请选择 JQL 模式并填写 JQL 条件' })
@@ -177,28 +279,21 @@ export function JiraPage() {
         mode,
         ...jiraConnection,
       })
-      setLastResult(res)
-
-      await services.projectService.upsertCachedProjects([
-        {
-          name: keyForRequest,
-          displayName: projectDisplayName.trim() ? projectDisplayName.trim() : undefined,
-          cycle: res.cycleLabel.replace(' - ', '-'),
-          defects: res.fetchedCount,
-          teams: Math.max(1, Math.round(res.fetchedCount / 200)),
-        },
-      ])
-      await refreshCache()
-
-      toast('同步成功', {
-        description:
-          mode === 'normal'
-            ? `抓取 ${res.fetchedCount} 条`
-            : mode === 'incremental'
-              ? `增量更新 ${res.fetchedCount} 条`
-              : `覆盖重拉 ${res.fetchedCount} 条`,
-      })
+      await finishSync(
+        keyForRequest,
+        res,
+        mode === 'normal' ? '高级模式同步完成' : mode === 'incremental' ? '高级模式增量同步完成' : '高级模式覆盖同步完成',
+      )
     } catch (e: unknown) {
+      persistLastResult({
+        syncedAt: new Date().toISOString(),
+        cycleLabel: '',
+        fetchedCount: 0,
+        writtenCount: 0,
+        status: 'failed',
+        periodStart: '',
+        periodEnd: '',
+      })
       toast('同步失败', { description: e instanceof Error ? e.message : '服务调用失败' })
     } finally {
       setIsFetching(false)
@@ -215,155 +310,204 @@ export function JiraPage() {
       } else if (!selectedProjects.length) {
         setSelectedProjects([projectName])
       }
-      setActiveSection('history')
+      openProjectDetail(projectName)
     },
-    [selectedProjects, setActiveSection, setFocusProject, setSelectedProjects],
+    [openProjectDetail, selectedProjects, setFocusProject, setSelectedProjects],
   )
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold">JIRA 数据获取</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          可使用两种拉取方式：直接 JQL，或按项目 Key + 日期范围拉取。
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold">{embedded ? '导入项目' : 'JIRA 数据获取'}</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {embedded
+              ? '导入主流程始终同步该项目全部历史 Defect，本地事实数据会被项目详情、Team 分析和模块分布统一复用。'
+              : '主流程默认按项目 Key 同步全部历史 Defect；高级条件仅用于排障或调试。'}
+          </p>
+        </div>
+        {embedded ? (
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={() => openProjectHub('library')}>
+              返回项目列表
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="rounded-2xl xl:col-span-2">
           <CardHeader>
-            <CardTitle>拉数条件</CardTitle>
-            <CardDescription>请选择一种方式拉取 Jira 数据，避免混用条件造成歧义</CardDescription>
+            <CardTitle>{embedded ? '项目全量导入' : '主流程：全量同步项目历史'}</CardTitle>
+            <CardDescription>
+              {embedded
+                ? '导入完成后会自动写入项目库，并保留在当前页展示最近一次抓取结果。'
+                : '项目库只保留一条 Jira 主入口：同步该项目全部历史 Defect 数据。'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2 md:col-span-3">
-                <Label>拉取方式（二选一）</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={pullMode === 'jql' ? 'default' : 'outline'}
-                    className="rounded-2xl"
-                    onClick={() => setPullMode('jql')}
-                  >
-                    方式一：JQL
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={pullMode === 'projectStart' ? 'default' : 'outline'}
-                    className="rounded-2xl"
-                    onClick={() => setPullMode('projectStart')}
-                  >
-                    方式二：项目 Key + 日期范围
-                  </Button>
-                </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>项目 Key</Label>
+                <Input
+                  value={projectKey}
+                  onChange={(e) => setProjectKey(e.target.value.toUpperCase())}
+                  placeholder="例如 MNTNPOM"
+                  className="rounded-2xl font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{embedded ? '显示名称（推荐填写）' : '项目显示名称（推荐填写）'}</Label>
+                <Input
+                  value={projectDisplayName}
+                  onChange={(e) => setProjectDisplayName(e.target.value)}
+                  placeholder="例如：墨水屏项目 / 智能电视 App"
+                  className="rounded-2xl"
+                />
               </div>
             </div>
-            {pullMode === 'jql' ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              主流程会忽略日期范围和 JQL，直接拉取该项目全部历史 Defect，并统一写入本地原始 issue 数据层。
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button className="rounded-2xl" disabled={isFetching} onClick={() => void runFullSync()}>
+                {embedded ? '同步并导入项目' : '同步全部历史'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-2xl"
+                disabled={isFetching}
+                onClick={() => setShowAdvanced((value) => !value)}
+              >
+                {showAdvanced ? '收起高级/调试入口' : '展开高级/调试入口'}
+              </Button>
+            </div>
+            {showAdvanced ? (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>JQL 输入</Label>
-                  <textarea
-                    className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                    value={jql}
-                    onChange={(e) => setJql(e.target.value)}
-                  />
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  高级入口仅用于排障或临时验证，不建议作为常规导入方式。
                 </div>
-                {jqlParsedProjectKey ? (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    已从 JQL 识别项目 Key（将用于存储与调试接口）：{' '}
-                    <span className="font-mono font-medium">{jqlParsedProjectKey}</span>
+                <div className="space-y-2">
+                  <Label>调试方式（二选一）</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={pullMode === 'jql' ? 'default' : 'outline'}
+                      className="rounded-2xl"
+                      onClick={() => setPullMode('jql')}
+                    >
+                      调试 JQL
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={pullMode === 'projectStart' ? 'default' : 'outline'}
+                      className="rounded-2xl"
+                      onClick={() => setPullMode('projectStart')}
+                    >
+                      调试日期范围
+                    </Button>
+                  </div>
+                </div>
+                {pullMode === 'jql' ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>JQL 输入</Label>
+                      <textarea
+                        className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                        value={jql}
+                        onChange={(e) => setJql(e.target.value)}
+                      />
+                    </div>
+                    {jqlParsedProjectKey ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        已从 JQL 识别项目 Key（将用于存储与调试接口）：{' '}
+                        <span className="font-mono font-medium">{jqlParsedProjectKey}</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label>项目 Key（JQL 未包含 project 时必填）</Label>
+                        <Input
+                          value={projectKey}
+                          onChange={(e) => setProjectKey(e.target.value)}
+                          placeholder="例如 DVW"
+                          className="rounded-2xl font-mono"
+                        />
+                        <p className="text-xs text-slate-500">
+                          多项目 JQL（如 project in (A, B)）无法自动识别时，请手动填写用于落库与调试快照的项目 Key。
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    <Label>项目 Key（JQL 未包含 project 时必填）</Label>
-                    <Input
-                      value={projectKey}
-                      onChange={(e) => setProjectKey(e.target.value)}
-                      placeholder="例如 DVW"
-                      className="rounded-2xl font-mono"
-                    />
-                    <p className="text-xs text-slate-500">
-                      多项目 JQL（如 project in (A, B)）无法自动识别时，请手动填写用于落库与调试快照的项目 Key。
-                    </p>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                      <div className="space-y-2">
+                        <Label>项目 Key</Label>
+                        <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>开始日期</Label>
+                        <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>结束日期</Label>
+                        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>说明</Label>
+                        <Input value="仅用于调试，不建议常规使用" readOnly />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>开始周期（自动换算）</Label>
+                        <Input value={startWeek} readOnly />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>结束周期（自动换算）</Label>
+                        <Input value={endWeek} readOnly />
+                      </div>
+                    </div>
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label>项目名称（可选，用于展示）</Label>
-                  <Input
-                    value={projectDisplayName}
-                    onChange={(e) => setProjectDisplayName(e.target.value)}
-                    placeholder="例如：墨水屏项目 / 智能电视 App"
-                    className="rounded-2xl"
-                  />
+                  <Label>{embedded ? '显示名称（推荐填写）' : '项目显示名称（推荐填写）'}</Label>
+                  <Input value={projectDisplayName} onChange={(e) => setProjectDisplayName(e.target.value)} className="rounded-2xl" />
                   <p className="text-xs text-slate-500">
-                    该字段仅用于界面展示，便于区分项目；唯一标识仍以项目 Key 为准。
+                    该名称会作为项目库默认显示名，唯一标识仍然是项目 Key。
                   </p>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <div className="space-y-2">
-                    <Label>项目 Key</Label>
-                    <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>项目名称（可选，用于展示）</Label>
-                    <Input value={projectDisplayName} onChange={(e) => setProjectDisplayName(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>开始日期</Label>
-                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>结束日期</Label>
-                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>开始周期（自动换算）</Label>
-                    <Input value={startWeek} readOnly />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>结束周期（自动换算）</Label>
-                    <Input value={endWeek} readOnly />
-                  </div>
-                </div>
-                <div className="text-xs text-slate-500">
-                  W1 为每年 1 月 1 日到当周周日；第二周起每周固定从周一开始。
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    className="rounded-2xl"
+                    disabled={isFetching}
+                    title="仅用于调试当前筛选条件，不建议替代主流程导入。"
+                    onClick={() => void runFetch('normal')}
+                  >
+                    执行高级同步
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-2xl"
+                    disabled={isFetching}
+                    title="只补充高级条件命中的新数据。"
+                    onClick={() => void runFetch('incremental')}
+                  >
+                    高级增量
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-2xl"
+                    disabled={isFetching}
+                    title="按当前高级条件覆盖同步。"
+                    onClick={() => void runFetch('overwrite')}
+                  >
+                    高级覆盖
+                  </Button>
                 </div>
               </div>
-            )}
-            <div className="flex flex-wrap gap-3">
-              <Button
-                className="rounded-2xl"
-                disabled={isFetching}
-                title="用本轮 Jira 结果覆盖「本次拉取条件所涉及的业务周」在库中的数据；其它周保持不变。适合同步到最新。"
-                onClick={() => void runFetch('normal')}
-              >
-                抓取数据
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-2xl"
-                disabled={isFetching}
-                title="只补充库中尚不存在的业务周；已有周不覆盖、不刷新。按项目+日期拉取时也会跳过已有周以减少请求。"
-                onClick={() => void runFetch('incremental')}
-              >
-                增量更新
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-2xl"
-                disabled={isFetching}
-                title="清空该项目在库内的全部 Jira 周数据，再仅写入本次拉取结果中出现的周。慎用。"
-                onClick={() => void runFetch('overwrite')}
-              >
-                覆盖重拉
-              </Button>
-            </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -373,41 +517,39 @@ export function JiraPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <div className="text-sm text-slate-500">最近一次同步</div>
+              <div className="text-sm text-slate-500">拉取时间</div>
               <div className="mt-1 font-medium">
                 {lastResult ? new Date(lastResult.syncedAt).toLocaleString() : '-'}
               </div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">周期</div>
-              <div className="mt-1 font-medium">
-                {lastResult ? lastResult.cycleLabel : `${startWeek} - ${endWeek}`}
-              </div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">本次抓取（Issue 条数）</div>
+              <div className="text-sm text-slate-500">数量（Issue 条数）</div>
               <div className="mt-1 font-medium">
                 {lastResult ? `${lastResult.fetchedCount} 条` : '-'}
               </div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">涉及业务周（聚合后写入/更新的周行数）</div>
+              <div className="text-sm text-slate-500">拉取状态</div>
               <div className="mt-1 font-medium">
-                {lastResult ? `${lastResult.writtenCount} 周` : '-'}
+                {lastResult ? (lastResult.status === 'success' ? '成功' : '失败') : '-'}
               </div>
             </div>
-            <Progress value={isFetching ? 60 : lastResult?.status === 'success' ? 100 : 0} />
-            <Badge className="rounded-xl">
-              {isFetching ? '同步中' : lastResult?.status === 'success' ? '同步成功' : '未同步'}
-            </Badge>
+            <div>
+              <div className="text-sm text-slate-500">周期（首个~最后一个 Defect 创建时间）</div>
+              <div className="mt-1 font-medium">
+                {resolvePeriodLabel(lastResult)}
+              </div>
+            </div>
+            {isFetching ? <Progress value={60} /> : null}
+            {isFetching ? <Badge className="rounded-xl">同步中</Badge> : null}
           </CardContent>
         </Card>
       </div>
 
       <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle>历史项目缓存</CardTitle>
-          <CardDescription>给后续历史项目对比和相似项目识别使用</CardDescription>
+          <CardTitle>{embedded ? '项目库中的已导入项目' : '历史项目缓存'}</CardTitle>
+          <CardDescription>{embedded ? '点击任一项目可直接打开项目详情。' : '给后续历史项目对比和相似项目识别使用'}</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>

@@ -1,27 +1,24 @@
 import * as React from 'react'
 import { toast } from 'sonner'
-import ReactECharts from 'echarts-for-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Progress } from '@/components/ui/progress'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { BugBoardFetchCard } from '@/components/bug-board/BugBoardFetchCard'
+import { BugBoardProjectViewCard } from '@/components/bug-board/BugBoardProjectViewCard'
 import { services } from '@/services'
 import { useProjectStore } from '@/stores/projectStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { BugDistTaskStatus } from '@/services/bugDistService'
+import type { ProjectSummary } from '@/services/projectService'
+import { formatProjectLabel } from '@/utils/projectLibrary'
+import type { FieldMapping } from '@/types/settings'
 
 const DEFAULT_PRIMARY = 'MNTNPOM'
 const BUG_BOARD_CACHE_KEY = 'drp.bugBoard.cachedProjects.v1'
 const BUG_BOARD_RESULT_CACHE_KEY = 'drp.bugBoard.results.v1'
 const BUG_BOARD_PROJECT_NAMES_KEY = 'drp.bugBoard.projectNames.v1'
 const BUG_BOARD_MIX_MAP_KEY = 'drp.bugBoard.mixMap.v1'
-const PRIMARY_COLOR = '#6366f1'
-const COMPARE_COLOR = '#22c55e'
+const BugBoardDistributionSection = React.lazy(async () => {
+  const mod = await import('@/components/bug-board/BugBoardDistributionSection')
+  return { default: mod.BugBoardDistributionSection }
+})
 
 function loadCachedProjects(): string[] {
   try {
@@ -116,8 +113,8 @@ type BugBoardResultCacheV2 = {
   results: Record<string, { taskId: string; result: unknown }>
 }
 
-function resultCacheKey(primary: string, compare: string) {
-  return `${primary.trim().toUpperCase()}::${compare.trim().toUpperCase()}`
+function resultCacheKey(primary: string, compare: string, startDate = '', endDate = '') {
+  return `${primary.trim().toUpperCase()}::${compare.trim().toUpperCase()}::${startDate.trim()}::${endDate.trim()}`
 }
 
 function resolvedPrimaryIssueCount(r: NonNullable<BugDistTaskStatus['result']>): number {
@@ -135,11 +132,11 @@ function resolvedCompareIssueCount(r: NonNullable<BugDistTaskStatus['result']>):
   return rows.reduce((s, x) => s + (typeof x.compare === 'number' ? x.compare : 0), 0)
 }
 
-function loadResultFromCache(primary: string, compare: string) {
+function loadResultFromCache(primary: string, compare: string, startDate = '', endDate = '') {
   try {
     const raw = localStorage.getItem(BUG_BOARD_RESULT_CACHE_KEY)
     if (!raw) return null
-    const key = resultCacheKey(primary, compare)
+    const key = resultCacheKey(primary, compare, startDate, endDate)
     const parsed = JSON.parse(raw) as BugBoardResultCacheV1 | BugBoardResultCacheV2
     if (!parsed || typeof parsed !== 'object') return null
 
@@ -167,7 +164,7 @@ function loadResultFromCache(primary: string, compare: string) {
   }
 }
 
-function saveResultToCache(taskId: string, result: NonNullable<BugDistTaskStatus['result']>) {
+function saveResultToCache(taskId: string, result: NonNullable<BugDistTaskStatus['result']>, startDate = '', endDate = '') {
   try {
     const raw = localStorage.getItem(BUG_BOARD_RESULT_CACHE_KEY)
     const parsed = raw ? (JSON.parse(raw) as BugBoardResultCacheV1 | BugBoardResultCacheV2) : null
@@ -190,7 +187,7 @@ function saveResultToCache(taskId: string, result: NonNullable<BugDistTaskStatus
       updatedAt: new Date().toISOString(),
       results: existingResults,
     }
-    const key = resultCacheKey(result.primaryProjectKey, result.compareProjectKey ?? '')
+    const key = resultCacheKey(result.primaryProjectKey, result.compareProjectKey ?? '', startDate, endDate)
     const nextResults: BugBoardResultCacheV2['results'] = {
       ...base.results,
       [key]: { taskId: taskId || '', result },
@@ -329,12 +326,24 @@ function exportRowsToXlsHtml(title: string, rows: Array<{ name: string; primary:
   return new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' })
 }
 
-export function BugBoardPage() {
+type BugBoardPageProps = {
+  embedded?: boolean
+  defaultPrimaryProjectKey?: string
+  analysisStartDate?: string
+  analysisEndDate?: string
+}
+
+export function BugBoardPage({
+  embedded = false,
+  defaultPrimaryProjectKey = '',
+  analysisStartDate = '',
+  analysisEndDate = '',
+}: BugBoardPageProps) {
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const setActiveSection = useProjectStore((s) => s.setActiveSection)
   const [fetchKeysRaw, setFetchKeysRaw] = React.useState(DEFAULT_PRIMARY)
   const fetchKeys = React.useMemo(() => parseProjectKeys(fetchKeysRaw), [fetchKeysRaw])
-  const [viewPrimaryProjectKey, setViewPrimaryProjectKey] = React.useState(DEFAULT_PRIMARY)
+  const [viewPrimaryProjectKey, setViewPrimaryProjectKey] = React.useState(defaultPrimaryProjectKey || DEFAULT_PRIMARY)
   const [viewCompareProjectKey, setViewCompareProjectKey] = React.useState('')
   const [forceRefresh, setForceRefresh] = React.useState(false)
   const [exportTaskId, setExportTaskId] = React.useState('')
@@ -344,20 +353,100 @@ export function BugBoardPage() {
   const [exporting, setExporting] = React.useState(false)
   const [cachedProjects, setCachedProjects] = React.useState<string[]>(() => loadCachedProjects())
   const [projectNames, setProjectNames] = React.useState<Record<string, string>>(() => loadProjectNames())
+  const [projectSummaries, setProjectSummaries] = React.useState<ProjectSummary[]>([])
+  const [fieldMappings, setFieldMappings] = React.useState<FieldMapping[]>([])
   const [mixName, setMixName] = React.useState('')
   const [mixMap, setMixMap] = React.useState<Record<string, string[]>>(() => loadMixMap())
   const [topN, setTopN] = React.useState(15)
+  const normalizedRangeStart = React.useMemo(() => analysisStartDate.trim(), [analysisStartDate])
+  const normalizedRangeEnd = React.useMemo(() => analysisEndDate.trim(), [analysisEndDate])
+  const summaryProjectKeys = React.useMemo(
+    () => projectSummaries.map((item) => item.name.trim().toUpperCase()).filter(Boolean),
+    [projectSummaries],
+  )
+  const pickerProjectKeys = React.useMemo(() => {
+    if (embedded) return summaryProjectKeys
+    const summarySet = new Set(summaryProjectKeys)
+    const merged = [
+      ...summaryProjectKeys,
+      ...cachedProjects.filter((key) => key.startsWith('MIX:') || summarySet.has(key)),
+    ]
+    return Array.from(new Set(merged))
+  }, [embedded, summaryProjectKeys, cachedProjects])
 
   const displayProject = React.useCallback(
     (key: string) => {
       const k = key.trim().toUpperCase()
-      const name = projectNames[k]?.trim()
+      const summary = projectSummaries.find((item) => item.name === k)
+      const name = summary?.displayName?.trim() || projectNames[k]?.trim()
       if (!name) return k
       // 混合项目的 key 可能很长（MIX:A+B+...），下拉与图例仅展示用户输入名称
       if (k.startsWith('MIX:')) return name
-      return `${name}（${k}）`
+      return formatProjectLabel(k, name)
     },
-    [projectNames],
+    [projectNames, projectSummaries],
+  )
+
+  React.useEffect(() => {
+    let cancelled = false
+    void services.projectService.listCachedProjects().then((rows) => {
+      if (cancelled) return
+      setProjectSummaries(rows)
+      setCachedProjects((prev) => {
+        const merged = Array.from(new Set([...rows.map((row) => row.name), ...prev]))
+        persistCachedProjects(merged)
+        return merged
+      })
+      setProjectNames((prev) => {
+        const next = { ...prev }
+        rows.forEach((row) => {
+          if (row.displayName?.trim()) next[row.name] = row.displayName.trim()
+        })
+        persistProjectNames(next)
+        return next
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  React.useEffect(() => {
+    let cancelled = false
+    void services.configService.listFieldMappings().then((rows) => {
+      if (!cancelled) setFieldMappings(rows)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  React.useEffect(() => {
+    const key = defaultPrimaryProjectKey.trim().toUpperCase()
+    if (!key) return
+    setViewPrimaryProjectKey(key)
+    setFetchKeysRaw(key)
+  }, [defaultPrimaryProjectKey])
+
+  React.useEffect(() => {
+    if (!embedded) return
+    if (!pickerProjectKeys.length) return
+    const current = viewPrimaryProjectKey.trim().toUpperCase()
+    if (current && pickerProjectKeys.includes(current)) return
+    setViewPrimaryProjectKey(pickerProjectKeys[0] ?? '')
+    setViewCompareProjectKey('')
+  }, [embedded, pickerProjectKeys, viewPrimaryProjectKey])
+
+  const reporterTeamFieldPath = React.useMemo(
+    () =>
+      fieldMappings.find((item) => item.businessName === 'Reporter Team-New')?.jiraFieldPath?.trim() ||
+      'customfield_15319',
+    [fieldMappings],
+  )
+  const issueTypeClause = 'issuetype in (defect, defect_new)'
+  const importedProjectKeys = React.useMemo(
+    () => new Set(projectSummaries.map((item) => item.name.trim().toUpperCase()).filter(Boolean)),
+    [projectSummaries],
   )
 
   const ensureJiraConfigOk = () => {
@@ -387,17 +476,20 @@ export function BugBoardPage() {
           primaryProjectKey: primary,
           compareProjectKey: compare,
           forceRefresh: force,
+          startDate: normalizedRangeStart,
+          endDate: normalizedRangeEnd,
+          teamFieldPath: reporterTeamFieldPath,
+          issueTypeClause,
           ...jiraConnection,
         })
         const id = res.taskId
         const deadline = Date.now() + 5 * 60_000
         while (Date.now() < deadline) {
-          // eslint-disable-next-line no-await-in-loop
           const s = await services.bugDistService.getTaskStatus(id)
           setStatus(s)
           if (s.status === 'failed') throw new Error(s.error || '任务失败')
           if (s.status === 'success' && s.result) {
-            saveResultToCache(id, s.result)
+            saveResultToCache(id, s.result, normalizedRangeStart, normalizedRangeEnd)
             setExportTaskId(id)
             const key = s.result.primaryProjectKey.trim().toUpperCase()
             setCachedProjects((prev) => {
@@ -407,7 +499,6 @@ export function BugBoardPage() {
             })
             return { taskId: id, result: s.result }
           }
-          // eslint-disable-next-line no-await-in-loop
           await new Promise((r) => setTimeout(r, 900))
         }
         throw new Error('任务超时')
@@ -415,7 +506,7 @@ export function BugBoardPage() {
         setPolling(false)
       }
     },
-    [jiraConnection],
+    [issueTypeClause, jiraConnection, normalizedRangeStart, normalizedRangeEnd, reporterTeamFieldPath],
   )
 
   const fetchData = async () => {
@@ -423,7 +514,8 @@ export function BugBoardPage() {
       toast('获取失败', { description: '请填写项目 Key' })
       return
     }
-    if (!ensureJiraConfigOk()) return
+    const allImported = fetchKeys.every((key) => importedProjectKeys.has(key))
+    if (!allImported && !ensureJiraConfigOk()) return
     if (fetchKeys.length === 1) {
       const key = fetchKeys[0]!
       setViewPrimaryProjectKey(key)
@@ -442,7 +534,6 @@ export function BugBoardPage() {
     // 逐个拉取子项目（复用后端缓存；forceRefresh 生效）
     const childResults: Array<NonNullable<BugDistTaskStatus['result']>> = []
     for (const key of fetchKeys) {
-      // eslint-disable-next-line no-await-in-loop
       const done = await runTaskAndWait(key, '', forceRefresh)
       childResults.push(done.result)
     }
@@ -468,7 +559,7 @@ export function BugBoardPage() {
     }
 
     // 写入本地缓存（无 taskId），并登记名称与 mix 组成
-    saveResultToCache('', mixResult)
+    saveResultToCache('', mixResult, normalizedRangeStart, normalizedRangeEnd)
     const nextNames = { ...projectNames, [mixKey]: mixLabel }
     setProjectNames(nextNames)
     persistProjectNames(nextNames)
@@ -493,9 +584,9 @@ export function BugBoardPage() {
     toast('已完成', { description: `已生成混合项目：${mixLabel}` })
   }
 
-  const buildCompare = async () => {
+  const buildCompare = async (compareOverride?: string) => {
     const primary = viewPrimaryProjectKey.trim().toUpperCase()
-    const compare = viewCompareProjectKey.trim().toUpperCase()
+    const compare = (compareOverride ?? viewCompareProjectKey).trim().toUpperCase()
     if (!primary) {
       toast('对比失败', { description: '请选择一个主项目' })
       return
@@ -504,11 +595,23 @@ export function BugBoardPage() {
       toast('对比失败', { description: '请选择一个对比项目' })
       return
     }
-    // 对比优先本地构建（尤其是混合项目无法后端直接拉）
-    const primaryCached = loadResultFromCache(primary, '')
-    const compareCached = loadResultFromCache(compare, '')
+    // 对比优先本地构建；若缺缓存则自动补算对应项目，避免用户必须先手动“获取”
+    let primaryCached = loadResultFromCache(primary, '', normalizedRangeStart, normalizedRangeEnd)
+    let compareCached = loadResultFromCache(compare, '', normalizedRangeStart, normalizedRangeEnd)
+    const canUseImportedData =
+      importedProjectKeys.has(primary) &&
+      importedProjectKeys.has(compare)
+    if ((!primaryCached || !compareCached) && !canUseImportedData && !ensureJiraConfigOk()) return
+    if (!primaryCached) {
+      const done = await runTaskAndWait(primary, '', false)
+      primaryCached = { taskId: done.taskId, result: done.result }
+    }
+    if (!compareCached) {
+      const done = await runTaskAndWait(compare, '', false)
+      compareCached = { taskId: done.taskId, result: done.result }
+    }
     if (!primaryCached || !compareCached) {
-      toast('对比失败', { description: '请确保主项目与对比项目都已获取并生成结果（可在数据获取里先获取）' })
+      toast('对比失败', { description: '主项目或对比项目统计结果不可用，请稍后重试' })
       return
     }
     const moduleRows = buildCompareRows(
@@ -529,7 +632,7 @@ export function BugBoardPage() {
       module: { rows: moduleRows, top15: moduleRows.slice(0, 15) },
       team: { rows: teamRows, top15: teamRows.slice(0, 15) },
     }
-    saveResultToCache('', merged)
+    saveResultToCache('', merged, normalizedRangeStart, normalizedRangeEnd)
     setExportTaskId('')
     setStatus({
       taskId: 'local-compare',
@@ -543,7 +646,7 @@ export function BugBoardPage() {
   React.useEffect(() => {
     const primary = viewPrimaryProjectKey.trim().toUpperCase()
     if (!primary) return
-    const cached = loadResultFromCache(primary, '')
+    const cached = loadResultFromCache(primary, '', normalizedRangeStart, normalizedRangeEnd)
     if (!cached) {
       setStatus(null)
       setExportTaskId('')
@@ -557,7 +660,27 @@ export function BugBoardPage() {
       result: cached.result,
       error: '',
     })
-  }, [viewPrimaryProjectKey])
+  }, [normalizedRangeEnd, normalizedRangeStart, viewPrimaryProjectKey])
+
+  React.useEffect(() => {
+    if (!embedded) return
+    const primary = viewPrimaryProjectKey.trim().toUpperCase()
+    if (!primary) return
+    const cached = loadResultFromCache(primary, '', normalizedRangeStart, normalizedRangeEnd)
+    if (cached?.result) return
+    const canUseImportedData = importedProjectKeys.has(primary)
+    if (!canUseImportedData && !ensureJiraConfigOk()) return
+    void runTaskAndWait(primary, '', false).catch((e: unknown) => {
+      toast('自动统计失败', { description: e instanceof Error ? e.message : '模块分布自动统计失败' })
+    })
+  }, [
+    embedded,
+    importedProjectKeys,
+    normalizedRangeEnd,
+    normalizedRangeStart,
+    runTaskAndWait,
+    viewPrimaryProjectKey,
+  ])
 
   const exportCurrent = (format: 'csv' | 'xlsx') => {
     if (exporting) return
@@ -612,7 +735,10 @@ export function BugBoardPage() {
       toast('无法导出', { description: '当前项目没有可导出的统计结果，请先获取/对比一次' })
       return
     }
-    if (!ensureJiraConfigOk()) return
+    const canUseImportedData =
+      importedProjectKeys.has(current.primaryProjectKey.trim().toUpperCase()) &&
+      (!current.compareProjectKey || importedProjectKeys.has(current.compareProjectKey.trim().toUpperCase()))
+    if (!canUseImportedData && !ensureJiraConfigOk()) return
 
     setExporting(true)
     toast('准备导出', { description: '正在生成导出任务（首次可能稍慢）' })
@@ -621,6 +747,10 @@ export function BugBoardPage() {
         primaryProjectKey: current.primaryProjectKey,
         compareProjectKey: current.compareProjectKey ?? '',
         forceRefresh: false,
+        startDate: normalizedRangeStart,
+        endDate: normalizedRangeEnd,
+        teamFieldPath: reporterTeamFieldPath,
+        issueTypeClause,
         ...jiraConnection,
       })
       .then(async (res) => {
@@ -628,17 +758,15 @@ export function BugBoardPage() {
         // poll until success
         const deadline = Date.now() + 60_000
         while (Date.now() < deadline) {
-          // eslint-disable-next-line no-await-in-loop
           const s = await services.bugDistService.getTaskStatus(id)
           if (s.status === 'failed') throw new Error(s.error || '导出任务失败')
           if (s.status === 'success' && s.result) {
-            saveResultToCache(id, s.result)
+            saveResultToCache(id, s.result, normalizedRangeStart, normalizedRangeEnd)
             setExportTaskId(id)
             const url = services.bugDistService.getExportUrl({ taskId: id, tab: activeTab, format })
             downloadUrl(url)
             return
           }
-          // eslint-disable-next-line no-await-in-loop
           await new Promise((r) => setTimeout(r, 800))
         }
         throw new Error('导出任务超时，请稍后重试')
@@ -670,416 +798,132 @@ export function BugBoardPage() {
       .startsWith('MIX:') &&
     status?.taskId !== 'local-compare'
 
-  const moduleChartOption = React.useMemo(() => {
-    const items = moduleTop
-    const categories = items.map((x) => x.name)
-    const primary = items.map((x) => x.primary)
-    const compare = items.map((x) => x.compare)
-    const hasCompare = viewCompareProjectKey.trim().length > 0
-    const primaryName = viewPrimaryProjectKey.trim()
-      ? `${displayProject(viewPrimaryProjectKey)}（主）`
-      : '主项目'
-    const compareName = viewCompareProjectKey.trim()
-      ? `${displayProject(viewCompareProjectKey)}（对比）`
-      : '对比项目'
-    return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      toolbox: { feature: { saveAsImage: {}, dataZoom: {} } },
-      legend: { top: 8, left: 12, right: 12 },
-      grid: { left: 56, right: 24, top: 48, bottom: 120, containLabel: true },
-      xAxis: {
-        type: 'category',
-        name: '模块',
-        nameGap: 44,
-        data: categories,
-        axisLabel: {
-          interval: 0,
-          rotate: 35,
-          overflow: 'truncate',
-          width: 110,
-          margin: 18,
-        },
-      },
-      yAxis: {
-        type: 'value',
-        name: '数量',
-        nameLocation: 'middle',
-        nameGap: 54,
-        nameRotate: 90,
-        nameTextStyle: { color: '#64748b' },
-      },
-      dataZoom: [
-        { type: 'inside', xAxisIndex: 0 },
-        {
-          type: 'slider',
-          xAxisIndex: 0,
-          bottom: 18,
-          height: 22,
-        },
-      ],
-      series: [
-        { name: primaryName, type: 'bar', data: primary, itemStyle: { color: PRIMARY_COLOR } },
-        ...(hasCompare
-          ? [{ name: compareName, type: 'bar', data: compare, itemStyle: { color: COMPARE_COLOR } }]
-          : []),
-      ],
-    }
-  }, [moduleTop, viewPrimaryProjectKey, viewCompareProjectKey, displayProject])
-
-  const teamChartOption = React.useMemo(() => {
-    const items = teamTop
-    const categories = items.map((x) => x.name)
-    const primary = items.map((x) => x.primary)
-    const compare = items.map((x) => x.compare)
-    const hasCompare = viewCompareProjectKey.trim().length > 0
-    const showSlider = categories.length > 10
-    const primaryName = viewPrimaryProjectKey.trim()
-      ? `${displayProject(viewPrimaryProjectKey)}（主）`
-      : '主项目'
-    const compareName = viewCompareProjectKey.trim()
-      ? `${displayProject(viewCompareProjectKey)}（对比）`
-      : '对比项目'
-    return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      toolbox: { feature: { saveAsImage: {}, dataZoom: {} } },
-      legend: { top: 8, left: 12, right: 12 },
-      grid: { left: 56, right: 24, top: 48, bottom: showSlider ? 130 : 120, containLabel: true },
-      xAxis: {
-        type: 'category',
-        name: 'Team',
-        nameGap: 44,
-        data: categories,
-        axisLabel: {
-          interval: 0,
-          rotate: 35,
-          overflow: 'truncate',
-          width: 130,
-          margin: 18,
-        },
-      },
-      yAxis: {
-        type: 'value',
-        name: '数量',
-        nameLocation: 'middle',
-        nameGap: 54,
-        nameRotate: 90,
-        nameTextStyle: { color: '#64748b' },
-      },
-      dataZoom: [
-        { type: 'inside', xAxisIndex: 0 },
-        {
-          type: 'slider',
-          xAxisIndex: 0,
-          bottom: 18,
-          height: 22,
-        },
-      ],
-      series: [
-        { name: primaryName, type: 'bar', data: primary, itemStyle: { color: PRIMARY_COLOR } },
-        ...(hasCompare
-          ? [{ name: compareName, type: 'bar', data: compare, itemStyle: { color: COMPARE_COLOR } }]
-          : []),
-      ],
-    }
-  }, [teamTop, viewPrimaryProjectKey, viewCompareProjectKey, displayProject])
-
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold">项目bug分布</h2>
-        <p className="mt-1 text-sm text-slate-500">获取指定项目的 Defect，并按模块（Component）与提报 Team 做分布统计与对比。</p>
-      </div>
+      {embedded ? null : (
+        <div>
+          <h2 className="text-2xl font-semibold">项目bug分布</h2>
+          <p className="mt-1 text-sm text-slate-500">获取指定项目的 Defect，并按模块（Component）与提报 Team 做分布统计与对比。</p>
+        </div>
+      )}
 
-      <Card className="rounded-2xl">
-        <CardHeader>
-          <CardTitle>数据获取</CardTitle>
-          <CardDescription>专门用于从 Jira 拉取指定项目的 Defect 数据，并缓存到本地（便于后续对比）。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label>项目 Key（可多行，逗号/空格/换行分隔）</Label>
-              <Textarea
-                className="min-h-[84px] rounded-2xl font-mono"
-                value={fetchKeysRaw}
-                onChange={(e) => {
-                  setFetchKeysRaw(e.target.value)
-                  const keys = parseProjectKeys(e.target.value)
-                  if (keys.length <= 1) return
-                }}
-              />
-              {fetchKeys.length > 1 ? (
-                <div className="space-y-2 rounded-2xl border bg-white p-3">
-                  <div className="text-xs text-slate-500">
-                    已识别 {fetchKeys.length} 个项目 Key。将合并为一个“混合项目”，请先为这个混合项目命名（必填）。
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="h-9 rounded-xl"
-                      placeholder="例如：26W2-26W27 组合项目 / 某系列混合"
-                      value={mixName}
-                      onChange={(e) => setMixName(e.target.value)}
-                    />
-                  </div>
+      {!embedded ? (
+        <BugBoardFetchCard
+          embedded={embedded}
+          fetchKeysRaw={fetchKeysRaw}
+          onFetchKeysRawChange={setFetchKeysRaw}
+          fetchKeysLength={fetchKeys.length}
+          mixName={mixName}
+          onMixNameChange={setMixName}
+          forceRefresh={forceRefresh}
+          onForceRefreshChange={setForceRefresh}
+          polling={polling}
+          disableFetch={polling || !fetchKeys.length || (fetchKeys.length > 1 && !mixName.trim())}
+          onFetch={() => void fetchData()}
+          showProgress={polling}
+          progressMessage={progress?.message || '任务执行中…'}
+          progressLabel={progress ? `${progress.fetched}${progress.total ? `/${progress.total}` : ''}` : '-'}
+          progressValue={progress?.total ? percent : 60}
+          statusContent={
+            status?.status === 'success' && result ? (
+              <div className="space-y-2">
+                <div className="text-sm text-slate-600">
+                  已完成（{result.cached ? '命中缓存' : '已拉取并聚合'}），生成时间：
+                  {result.generatedAt ? new Date(result.generatedAt).toLocaleString() : '-'}
                 </div>
-              ) : null}
-            </div>
-            <div className="space-y-2" />
-            <div className="space-y-2">
-              <Label>缓存</Label>
-              <div className="flex h-10 items-center gap-3 rounded-2xl border bg-white px-4 text-sm">
-                <input id="forceRefresh" type="checkbox" checked={forceRefresh} onChange={(e) => setForceRefresh(e.target.checked)} />
-                <label htmlFor="forceRefresh" className="text-slate-700">
-                  强制刷新（仅对获取生效）
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Button
-              className="rounded-2xl"
-              disabled={
-                polling ||
-                !fetchKeys.length ||
-                (fetchKeys.length > 1 && !mixName.trim())
-              }
-              onClick={() => void fetchData()}
-            >
-              获取
-            </Button>
-          </div>
-
-          {polling ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm text-slate-600">
-                <span>{progress?.message || '任务执行中…'}</span>
-                <span className="font-mono">
-                  {progress ? `${progress.fetched}${progress.total ? `/${progress.total}` : ''}` : '-'}
-                </span>
-              </div>
-              <Progress value={progress?.total ? percent : 60} className="text-sky-700" />
-            </div>
-          ) : status?.status === 'success' && result ? (
-            <div className="space-y-2">
-              <div className="text-sm text-slate-600">
-                已完成（{result.cached ? '命中缓存' : '已拉取并聚合'}），生成时间：
-                {result.generatedAt ? new Date(result.generatedAt).toLocaleString() : '-'}
-              </div>
-              {showFetchDiskCacheHint ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                  当前数据来自<strong>本地缓存</strong>，本次获取未向 Jira 发起全量拉取。若需与 Jira 保持一致，请勾选「强制刷新」后重新点击获取。
-                </div>
-              ) : null}
-              <div className="text-sm text-slate-700">
-                {(result.compareProjectKey ?? '').trim() ? (
-                  <>
-                    主项目 Defect 条数：<span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
-                    ；对比项目：
-                    <span className="font-mono tabular-nums">{resolvedCompareIssueCount(result)}</span>
-                  </>
-                ) : String(result.primaryProjectKey ?? '')
-                    .trim()
-                    .toUpperCase()
-                    .startsWith('MIX:') ? (
-                  <>
-                    各子项目 Defect 条数合计（用于混合统计）：
-                    <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
-                  </>
-                ) : (
-                  <>
-                    本次统计 Defect 总条数：
-                    <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
-                  </>
-                )}
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader>
-          <CardTitle>项目查看</CardTitle>
-          <CardDescription>选择一个已缓存项目作为主项目，查看其模块/Team 分布结果。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <div className="space-y-2 md:col-span-3">
-              <Label>选择查看的项目</Label>
-              <div className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <Select
-                    value={viewPrimaryProjectKey}
-                    onValueChange={(v) => {
-                      const next = (v ?? '').trim()
-                      setViewPrimaryProjectKey(next)
-                      setViewCompareProjectKey('')
-                    }}
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <span data-slot="select-value" className="flex flex-1 truncate text-left">
-                        {viewPrimaryProjectKey ? displayProject(viewPrimaryProjectKey) : '请选择一个已缓存项目'}
-                      </span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cachedProjects.map((x) => (
-                        <SelectItem key={x} value={x}>
-                          {displayProject(x)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  variant="outline"
-                  className="shrink-0 rounded-2xl"
-                  disabled={polling || exporting || !(exportTaskId || status?.result)}
-                  onClick={() => exportCurrent('csv')}
-                >
-                  导出 CSV
-                </Button>
-                <Button
-                  variant="outline"
-                  className="shrink-0 rounded-2xl"
-                  disabled={polling || exporting || !(exportTaskId || status?.result)}
-                  onClick={() => exportCurrent('xlsx')}
-                >
-                  导出 Excel
-                </Button>
-              </div>
-            </div>
-            <div className="hidden md:block md:col-span-3" />
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <div className="space-y-2 md:col-span-3">
-              <Label>选择要对比的项目</Label>
-              <div className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <Select
-                    value={viewCompareProjectKey || '__none__'}
-                    onValueChange={(v) => {
-                      const next = (v ?? '').trim()
-                      setViewCompareProjectKey(next === '__none__' ? '' : next)
-                    }}
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <span data-slot="select-value" className="flex flex-1 truncate text-left">
-                        {viewCompareProjectKey ? displayProject(viewCompareProjectKey) : '不对比'}
-                      </span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">不对比</SelectItem>
-                      {cachedProjects
-                        .filter((x) => x && x !== viewPrimaryProjectKey.trim().toUpperCase())
-                        .map((x) => (
-                          <SelectItem key={x} value={x}>
-                            {displayProject(x)}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  variant="secondary"
-                  className="shrink-0 rounded-2xl"
-                  disabled={polling || exporting || !viewPrimaryProjectKey.trim() || !viewCompareProjectKey.trim()}
-                  onClick={() => void buildCompare()}
-                  title={!viewCompareProjectKey.trim() ? '请选择一个对比项目' : '生成对比结果'}
-                >
-                  对比
-                </Button>
-              </div>
-            </div>
-            <div className="hidden md:block md:col-span-3" />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader>
-          <CardTitle>分布统计</CardTitle>
-          <CardDescription>默认 Top15，可设置 1–30。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Label className="text-sm text-slate-600">图表显示条数</Label>
-            <Input
-              type="number"
-              min={1}
-              max={30}
-              value={topN}
-              onChange={(e) => setTopN(Number(e.target.value))}
-              className="h-9 w-28 rounded-2xl"
-            />
-            <div className="text-xs text-slate-500">最大 30，当前 {clampedTopN}</div>
-          </div>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'module' | 'team')} className="space-y-4">
-            <TabsList variant="line" className="w-full justify-start">
-              <TabsTrigger value="module">模块分布</TabsTrigger>
-              <TabsTrigger value="team">Team 分布</TabsTrigger>
-            </TabsList>
-            <TabsContent value="module" className="space-y-4">
-              <div className="h-[360px]">
-                {moduleTop.length ? (
-                  <ReactECharts option={moduleChartOption} style={{ height: '100%', width: '100%' }} notMerge />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                    {result ? '暂无模块 Top15 数据' : '请先点击“获取”'}
+                {showFetchDiskCacheHint ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                    当前数据来自<strong>本地缓存</strong>，本次获取未向 Jira 发起全量拉取。若需与 Jira 保持一致，请勾选「强制刷新」后重新点击获取。
                   </div>
-                )}
-              </div>
-            </TabsContent>
-            <TabsContent value="team" className="space-y-4">
-              <div className="h-[420px]">
-                {teamTop.length ? (
-                  <ReactECharts option={teamChartOption} style={{ height: '100%', width: '100%' }} notMerge />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                    {result
-                      ? '当前结果缺少 Team 分布数据（可能是旧缓存或后端返回缺字段），请在“数据获取”里勾选强制刷新后重新获取。'
-                      : '请先点击“获取”'}
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <div className="mt-4 overflow-x-auto rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[220px]">{activeTab === 'module' ? '模块' : 'Team'}</TableHead>
-                  <TableHead className="min-w-[120px] text-right">主项目数</TableHead>
-                  <TableHead className="min-w-[120px] text-right">对比项目数</TableHead>
-                  <TableHead className="min-w-[120px] text-right">Gap</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.name}>
-                    <TableCell className="font-medium">{r.name}</TableCell>
-                    <TableCell className="text-right">{r.primary}</TableCell>
-                    <TableCell className="text-right">{r.compare}</TableCell>
-                    <TableCell className={`text-right ${r.gap > 0 ? 'text-rose-700' : r.gap < 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
-                      {r.gap}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!rows.length ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="py-8 text-center text-sm text-slate-500">
-                      {result ? '暂无数据（返回空结果）' : '请先点击“获取”'}
-                    </TableCell>
-                  </TableRow>
                 ) : null}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+                <div className="text-sm text-slate-700">
+                  {(result.compareProjectKey ?? '').trim() ? (
+                    <>
+                      主项目 Defect 条数：<span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                      ；对比项目：
+                      <span className="font-mono tabular-nums">{resolvedCompareIssueCount(result)}</span>
+                    </>
+                  ) : String(result.primaryProjectKey ?? '').trim().toUpperCase().startsWith('MIX:') ? (
+                    <>
+                      各子项目 Defect 条数合计（用于混合统计）：
+                      <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                    </>
+                  ) : (
+                    <>
+                      本次统计 Defect 总条数：
+                      <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : null
+          }
+        />
+      ) : null}
+
+      <BugBoardProjectViewCard
+        viewPrimaryProjectKey={viewPrimaryProjectKey}
+        onPrimaryChange={(next) => {
+          setViewPrimaryProjectKey(next.trim().toUpperCase())
+          setViewCompareProjectKey('')
+        }}
+        primaryOptions={pickerProjectKeys.map((key) => ({
+          key,
+          displayName: projectSummaries.find((summary) => summary.name === key)?.displayName || projectNames[key],
+        }))}
+        viewCompareProjectKey={viewCompareProjectKey}
+        onCompareChange={(next) => {
+          const nextCompare = next.trim().toUpperCase()
+          setViewCompareProjectKey(nextCompare)
+          if (!nextCompare) {
+            const primary = viewPrimaryProjectKey.trim().toUpperCase()
+            const cached = loadResultFromCache(primary, '', normalizedRangeStart, normalizedRangeEnd)
+            if (!cached) {
+              setStatus(null)
+              setExportTaskId('')
+              return
+            }
+            setExportTaskId(cached.taskId)
+            setStatus({
+              taskId: 'local-cache',
+              status: 'success',
+              progress: { pageSize: 0, startAt: 0, fetched: 0, total: 0, message: '' },
+              result: cached.result,
+              error: '',
+            })
+            return
+          }
+          void buildCompare(nextCompare)
+        }}
+        compareOptions={pickerProjectKeys
+          .filter((key) => key && key !== viewPrimaryProjectKey.trim().toUpperCase())
+          .map((key) => ({
+            key,
+            displayName: projectSummaries.find((summary) => summary.name === key)?.displayName || projectNames[key],
+          }))}
+        polling={polling}
+        exporting={exporting}
+        canExport={Boolean(exportTaskId || status?.result)}
+        onExportCsv={() => exportCurrent('csv')}
+        onExportXlsx={() => exportCurrent('xlsx')}
+      />
+
+      <React.Suspense fallback={<div className="rounded-2xl border bg-white px-4 py-6 text-sm text-slate-500">分布统计加载中...</div>}>
+        <BugBoardDistributionSection
+          activeTab={activeTab}
+          onActiveTabChange={setActiveTab}
+          topN={topN}
+          onTopNChange={setTopN}
+          clampedTopN={clampedTopN}
+          moduleTop={moduleTop}
+          teamTop={teamTop}
+          rows={rows}
+          hasResult={Boolean(result)}
+          viewPrimaryProjectKey={viewPrimaryProjectKey}
+          viewCompareProjectKey={viewCompareProjectKey}
+          displayProject={displayProject}
+        />
+      </React.Suspense>
     </div>
   )
 }
-

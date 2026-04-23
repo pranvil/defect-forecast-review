@@ -22,6 +22,7 @@ export interface MilestoneLabel {
 
 export interface ProjectHistory {
   name: string
+  displayName?: string
   cycle: string
   defects: number
   teams: number

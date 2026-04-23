@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import socket
 import ssl
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
@@ -101,6 +102,9 @@ def _do_json_request(ctx: JiraRequestContext, target: str, payload: dict[str, An
         reason = str(e.reason) if getattr(e, "reason", None) else str(e)
         logger.warning("jira network error, target=%s, reason=%s", target, reason)
         raise ValueError(f"Jira 网络错误: {reason}") from e
+    except (TimeoutError, socket.timeout) as e:
+        logger.warning("jira timeout, target=%s, timeout=%s", target, ctx.timeout_sec)
+        raise ValueError(f"Jira 请求超时（>{ctx.timeout_sec}s），请稍后重试或增大超时设置") from e
 
 
 def _build_field_names(extra_fields: Iterable[str] | None) -> list[str]:

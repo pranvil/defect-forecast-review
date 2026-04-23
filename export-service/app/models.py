@@ -85,6 +85,8 @@ class JiraFetchResult(BaseModel):
     fetchedCount: int
     writtenCount: int
     status: Literal["success", "failed"]
+    periodStart: Optional[str] = ""
+    periodEnd: Optional[str] = ""
 
 
 class JiraConnectionTestRequest(BaseModel):
@@ -261,6 +263,10 @@ class BugDistCreateTaskRequest(BaseModel):
     primaryProjectKey: str = Field(min_length=1)
     compareProjectKey: str = ""
     forceRefresh: bool = False
+    startDate: str = ""
+    endDate: str = ""
+    teamFieldPath: str = "customfield_15319"
+    issueTypeClause: str = 'issuetype in (defect, defect_new)'
     baseUrl: str = Field(min_length=1)
     authType: Literal["pat", "basic"] = "pat"
     username: str = ""
@@ -310,4 +316,3 @@ class BugDistTaskStatus(BaseModel):
 
 class BugDistExportFormat(BaseModel):
     format: Literal["csv", "xlsx"]
-
