@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -118,6 +118,21 @@ type BugBoardResultCacheV2 = {
 
 function resultCacheKey(primary: string, compare: string) {
   return `${primary.trim().toUpperCase()}::${compare.trim().toUpperCase()}`
+}
+
+function resolvedPrimaryIssueCount(r: NonNullable<BugDistTaskStatus['result']>): number {
+  const n = r.primaryIssueCount
+  if (typeof n === 'number' && n > 0) return n
+  const rows = r.module?.rows ?? []
+  return rows.reduce((s, x) => s + (typeof x.primary === 'number' ? x.primary : 0), 0)
+}
+
+function resolvedCompareIssueCount(r: NonNullable<BugDistTaskStatus['result']>): number {
+  if (!(r.compareProjectKey ?? '').trim()) return 0
+  const n = r.compareIssueCount
+  if (typeof n === 'number' && n > 0) return n
+  const rows = r.module?.rows ?? []
+  return rows.reduce((s, x) => s + (typeof x.compare === 'number' ? x.compare : 0), 0)
 }
 
 function loadResultFromCache(primary: string, compare: string) {
@@ -439,12 +454,15 @@ export function BugBoardPage() {
     const mixKey = `MIX:${fetchKeys.join('+')}`
     const moduleRows = modules.map((x) => ({ name: x.name, primary: x.primary, compare: 0, gap: -x.primary }))
     const teamRows = teams.map((x) => ({ name: x.name, primary: x.primary, compare: 0, gap: -x.primary }))
+    const mixIssueTotal = childResults.reduce((s, r) => s + resolvedPrimaryIssueCount(r), 0)
 
     const mixResult: NonNullable<BugDistTaskStatus['result']> = {
       primaryProjectKey: mixKey,
       compareProjectKey: '',
       generatedAt: new Date().toISOString(),
       cached: true,
+      primaryIssueCount: mixIssueTotal,
+      compareIssueCount: 0,
       module: { rows: moduleRows, top15: moduleRows.slice(0, 15) },
       team: { rows: teamRows, top15: teamRows.slice(0, 15) },
     }
@@ -506,6 +524,8 @@ export function BugBoardPage() {
       compareProjectKey: compare,
       generatedAt: new Date().toISOString(),
       cached: true,
+      primaryIssueCount: moduleRows.reduce((s, x) => s + x.primary, 0),
+      compareIssueCount: moduleRows.reduce((s, x) => s + x.compare, 0),
       module: { rows: moduleRows, top15: moduleRows.slice(0, 15) },
       team: { rows: teamRows, top15: teamRows.slice(0, 15) },
     }
@@ -639,6 +659,16 @@ export function BugBoardPage() {
   const clampedTopN = Math.max(1, Math.min(30, Math.round(topN)))
   const moduleTop = (result?.module?.rows ?? []).slice(0, clampedTopN)
   const teamTop = (result?.team?.rows ?? []).slice(0, clampedTopN)
+
+  const showFetchDiskCacheHint =
+    status?.status === 'success' &&
+    Boolean(result) &&
+    Boolean(result?.cached) &&
+    !String(result?.primaryProjectKey ?? '')
+      .trim()
+      .toUpperCase()
+      .startsWith('MIX:') &&
+    status?.taskId !== 'local-compare'
 
   const moduleChartOption = React.useMemo(() => {
     const items = moduleTop
@@ -830,9 +860,39 @@ export function BugBoardPage() {
               </div>
               <Progress value={progress?.total ? percent : 60} className="text-sky-700" />
             </div>
-          ) : status?.status === 'success' ? (
-            <div className="text-sm text-slate-600">
-              已完成（{result?.cached ? '命中缓存' : '已拉取并聚合'}），生成时间：{result?.generatedAt ? new Date(result.generatedAt).toLocaleString() : '-'}
+          ) : status?.status === 'success' && result ? (
+            <div className="space-y-2">
+              <div className="text-sm text-slate-600">
+                已完成（{result.cached ? '命中缓存' : '已拉取并聚合'}），生成时间：
+                {result.generatedAt ? new Date(result.generatedAt).toLocaleString() : '-'}
+              </div>
+              {showFetchDiskCacheHint ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  当前数据来自<strong>本地缓存</strong>，本次获取未向 Jira 发起全量拉取。若需与 Jira 保持一致，请勾选「强制刷新」后重新点击获取。
+                </div>
+              ) : null}
+              <div className="text-sm text-slate-700">
+                {(result.compareProjectKey ?? '').trim() ? (
+                  <>
+                    主项目 Defect 条数：<span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                    ；对比项目：
+                    <span className="font-mono tabular-nums">{resolvedCompareIssueCount(result)}</span>
+                  </>
+                ) : String(result.primaryProjectKey ?? '')
+                    .trim()
+                    .toUpperCase()
+                    .startsWith('MIX:') ? (
+                  <>
+                    各子项目 Defect 条数合计（用于混合统计）：
+                    <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                  </>
+                ) : (
+                  <>
+                    本次统计 Defect 总条数：
+                    <span className="font-mono tabular-nums">{resolvedPrimaryIssueCount(result)}</span>
+                  </>
+                )}
+              </div>
             </div>
           ) : null}
         </CardContent>
@@ -858,9 +918,8 @@ export function BugBoardPage() {
                     }}
                   >
                     <SelectTrigger className="rounded-2xl">
-                      <SelectValue placeholder="请选择一个已缓存项目" />
-                      <span className="truncate text-left">
-                        {viewPrimaryProjectKey ? displayProject(viewPrimaryProjectKey) : ''}
+                      <span data-slot="select-value" className="flex flex-1 truncate text-left">
+                        {viewPrimaryProjectKey ? displayProject(viewPrimaryProjectKey) : '请选择一个已缓存项目'}
                       </span>
                     </SelectTrigger>
                     <SelectContent>
@@ -906,8 +965,7 @@ export function BugBoardPage() {
                     }}
                   >
                     <SelectTrigger className="rounded-2xl">
-                      <SelectValue placeholder="不对比" />
-                      <span className="truncate text-left">
+                      <span data-slot="select-value" className="flex flex-1 truncate text-left">
                         {viewCompareProjectKey ? displayProject(viewCompareProjectKey) : '不对比'}
                       </span>
                     </SelectTrigger>

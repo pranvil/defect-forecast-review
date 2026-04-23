@@ -62,6 +62,14 @@ def _cache_path(req: BugDistCreateTaskRequest, project_key: str) -> Path:
     return _cache_dir() / f"bug_dist_{_cache_key(req, project_key)}.json"
 
 
+def _infer_issue_counts(result: BugDistTaskResult) -> None:
+    """旧版缓存 JSON 不含条数字段时，从聚合行回填。"""
+    if result.primaryIssueCount <= 0 and result.module.rows:
+        result.primaryIssueCount = int(sum(r.primary for r in result.module.rows))
+    if result.compareProjectKey.strip() and result.compareIssueCount <= 0 and result.module.rows:
+        result.compareIssueCount = int(sum(r.compare for r in result.module.rows))
+
+
 def _read_cache(req: BugDistCreateTaskRequest, project_key: str) -> BugDistTaskResult | None:
     path = _cache_path(req, project_key)
     if not path.exists() or not path.is_file():
@@ -70,6 +78,7 @@ def _read_cache(req: BugDistCreateTaskRequest, project_key: str) -> BugDistTaskR
         raw = path.read_text(encoding="utf-8")
         payload = json.loads(raw) if raw else {}
         parsed = BugDistTaskResult.model_validate(payload)
+        _infer_issue_counts(parsed)
         return parsed
     except Exception as e:
         logger.warning("bug dist cache read failed, path=%s, error=%s", path, repr(e))
@@ -267,8 +276,10 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
             on_progress=progress_cb,
         )
         primary_df = _to_counts_df(primary_issues)
+        primary_issue_n = len(primary_issues)
 
         compare_df: pd.DataFrame | None = None
+        compare_issue_n = 0
         if compare_key:
             def progress_cb2(start_at: int, page_size: int, fetched: int, total: int):
                 _set_progress(task_id, start_at=start_at, page_size=page_size, fetched=fetched, total=total, message="拉取对比项目中…")
@@ -283,6 +294,7 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
                 on_progress=progress_cb2,
             )
             compare_df = _to_counts_df(compare_issues)
+            compare_issue_n = len(compare_issues)
 
         _set_progress(task_id, start_at=0, page_size=0, fetched=len(primary_df), total=len(primary_df), message="聚合统计中…")
         module_res = _build_tab_result(primary_df, compare_df, "module")
@@ -292,6 +304,8 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
             compareProjectKey=compare_key,
             generatedAt=_utcnow_iso(),
             cached=False,
+            primaryIssueCount=primary_issue_n,
+            compareIssueCount=compare_issue_n,
             module=module_res,
             team=team_res,
         )

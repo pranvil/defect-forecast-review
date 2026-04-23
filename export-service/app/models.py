@@ -294,6 +294,8 @@ class BugDistTaskResult(BaseModel):
     compareProjectKey: str = ""
     generatedAt: str
     cached: bool = False
+    primaryIssueCount: int = 0
+    compareIssueCount: int = 0
     module: BugDistTabResult
     team: BugDistTabResult
 

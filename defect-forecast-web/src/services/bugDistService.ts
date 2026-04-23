@@ -39,6 +39,10 @@ export interface BugDistTaskResult {
   compareProjectKey: string
   generatedAt: string
   cached: boolean
+  /** 主项目拉取到的 Defect 条数（旧缓存可能缺省，由前端从 module 行汇总兜底） */
+  primaryIssueCount?: number
+  /** 对比项目 Defect 条数（无对比项目时为 0） */
+  compareIssueCount?: number
   module: BugDistTabResult
   team: BugDistTabResult
 }

@@ -42,6 +42,8 @@ export const bugDistServiceMock: BugDistService = {
           compareProjectKey: req.compareProjectKey,
           generatedAt: new Date().toISOString(),
           cached: false,
+          primaryIssueCount: 200,
+          compareIssueCount: 0,
           module: {
             rows: makeRows('Component', 30, `${req.primaryProjectKey}|${req.compareProjectKey}`),
             top15: makeRows('Component', 30, `${req.primaryProjectKey}|${req.compareProjectKey}`).slice(0, 15),
