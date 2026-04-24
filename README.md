@@ -30,6 +30,36 @@ powershell -ExecutionPolicy Bypass -File .\drp-dev.ps1 -Stop
 
 前端默认请求后端地址见 `defect-forecast-web` 的 `.env`（`VITE_API_BASE_URL`，一般为 `http://127.0.0.1:8000`）。
 
+## 一键启动本地开发（macOS）
+
+在仓库根目录执行：
+
+```bash
+chmod +x ./drp-dev-mac.sh
+./drp-dev-mac.sh
+```
+
+脚本会自动：
+
+- 创建 `export-service/.venv`
+- 安装 `export-service/requirements.txt`
+- 首次安装前端依赖 `defect-forecast-web/node_modules`
+- 若不存在 `.env`，则从 `.env.example` 复制
+- 打开两个新的 Terminal 窗口，分别启动后端和前端
+
+停止方式：
+
+```bash
+./drp-dev-mac.sh -Stop
+```
+
+自定义端口示例：
+
+```bash
+./drp-dev-mac.sh --backend-port 8000 --frontend-port 5174
+./drp-dev-mac.sh -Stop --backend-port 8000 --frontend-port 5174
+```
+
 ## 分模块说明
 
 | 目录 | 说明 |
