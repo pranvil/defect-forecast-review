@@ -45,7 +45,7 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
-    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
+    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)

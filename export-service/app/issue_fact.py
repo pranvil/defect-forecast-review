@@ -31,6 +31,11 @@ FIELD_MAPPINGS_KEY = "field_mappings"
 TEAM_WEEKLY_KEY_PREFIX = "jira_team_weekly::"
 JIRA_DEBUG_KEY_PREFIX = "jira_debug::"
 DEFAULT_ISSUE_TYPE_CLAUSE = 'issuetype in (defect, defect_new)'
+DEFAULT_STATUS_CLAUSE = 'status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")'
+DEFAULT_SUMMARY_EXCLUSION_CLAUSE = '(summary !~ "MAIN2MP" AND summary !~ "MP2SMR")'
+DEFAULT_FETCH_FILTER_CLAUSE = (
+    f"{DEFAULT_ISSUE_TYPE_CLAUSE} AND {DEFAULT_STATUS_CLAUSE} AND {DEFAULT_SUMMARY_EXCLUSION_CLAUSE}"
+)
 DEFAULT_REPORTER_TEAM_FIELD = "customfield_15319"
 DEFAULT_ASSIGNEE_TEAM_FIELD = "customfield_15320"
 DEFAULT_VERIFIED_SW_FIELD = "customfield_13228"
@@ -237,11 +242,11 @@ def _build_fetch_plan(req: JiraFetchRequest) -> tuple[str, str, str]:
         end_exclusive = _add_days(req.endDate.strip(), 1)
         upper = f'created < "{end_exclusive}"' if end_exclusive else f'created <= "{req.endDate.strip()}"'
         bounded = (
-            f'project = "{project_key}" AND {DEFAULT_ISSUE_TYPE_CLAUSE} '
+            f'project = "{project_key}" AND {DEFAULT_FETCH_FILTER_CLAUSE} '
             f'AND created >= "{req.startDate.strip()}" AND {upper} ORDER BY created DESC'
         )
         return "advanced_range", bounded, bounded
-    bounded = f'project = "{project_key}" AND {DEFAULT_ISSUE_TYPE_CLAUSE} ORDER BY created DESC'
+    bounded = f'project = "{project_key}" AND {DEFAULT_FETCH_FILTER_CLAUSE} ORDER BY created DESC'
     return "full", bounded, bounded
 
 
@@ -1264,4 +1269,3 @@ def build_compare(project_name: str, forecastVersionId: str | None = None) -> Co
         metrics=metrics,
         weekly=weekly,
     )
-
