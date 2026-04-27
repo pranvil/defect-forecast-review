@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useProjectStore, type AppSection, type ProjectDetailTab, type ProjectHubView } from '@/stores/projectStore'
 
-const APP_SECTIONS: AppSection[] = ['projectHub', 'forecastInput', 'forecastResult', 'config']
+const APP_SECTIONS: AppSection[] = ['projectHub', 'forecastInput', 'forecastResult', 'blockIssues', 'config']
 const PROJECT_HUB_VIEWS: ProjectHubView[] = ['library', 'import', 'detail']
 const PROJECT_DETAIL_TABS: ProjectDetailTab[] = ['overview', 'trend', 'team', 'module', 'compare', 'info']
 

@@ -5,7 +5,7 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.bug_dist import create_task as create_bug_dist_task
 from app.bug_dist import export_tab_as_csv, export_tab_as_xlsx, get_task_status as get_bug_dist_task_status
+from app.block_issues import batch_mark_block_issues, build_block_template, mark_block_issue, search_block_issues
 from app.db import backup_database, get_db_path, migrate
 from app.excel.fill_forecast import fill_forecast_into_template
 from app.excel.template_io import load_template_workbook, workbook_to_bytes
@@ -46,6 +47,11 @@ from app.logic import (
 from app.models import (
     BugDistCreateTaskRequest,
     BugDistTaskStatus,
+    BlockIssueBatchResult,
+    BlockIssueMarkRequest,
+    BlockIssueMarkResult,
+    BlockIssueSearchRequest,
+    BlockIssueSearchResult,
     CompareColorsConfig,
     CompareResponse,
     ExportError,
@@ -150,6 +156,69 @@ def jira_fetch_debug(project_key: str) -> JiraFetchDebugInfo:
 @app.post("/api/jira/test-connection", response_model=JiraConnectionTestResult)
 def jira_test_connection(req: JiraConnectionTestRequest) -> JiraConnectionTestResult:
     return test_jira_connection(req)
+
+
+@app.post("/api/block-issues/search", response_model=BlockIssueSearchResult)
+def block_issues_search(req: BlockIssueSearchRequest) -> BlockIssueSearchResult:
+    try:
+        return search_block_issues(req)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("block issue search unexpected error, project=%s", req.projectKey)
+        raise HTTPException(status_code=500, detail="Block 问题拉取过程中发生服务异常，请稍后重试")
+
+
+@app.post("/api/block-issues/mark", response_model=BlockIssueMarkResult)
+def block_issue_mark(req: BlockIssueMarkRequest) -> BlockIssueMarkResult:
+    try:
+        return mark_block_issue(req)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("block issue mark unexpected error, issue=%s", req.issueKey)
+        raise HTTPException(status_code=500, detail="Block 标记提交过程中发生服务异常，请稍后重试")
+
+
+@app.post("/api/block-issues/batch", response_model=BlockIssueBatchResult)
+async def block_issue_batch(
+    file: UploadFile = File(...),
+    projectKey: str = Form(...),
+    baseUrl: str = Form(...),
+    authType: str = Form("pat"),
+    username: str = Form(""),
+    token: str = Form(...),
+    verifySsl: bool = Form(True),
+    timeoutSec: int = Form(10),
+) -> BlockIssueBatchResult:
+    try:
+        content = await file.read()
+        req = JiraFetchRequest(
+            projectKey=projectKey,
+            baseUrl=baseUrl,
+            authType=authType,  # type: ignore[arg-type]
+            username=username,
+            token=token,
+            verifySsl=verifySsl,
+            timeoutSec=timeoutSec,
+        )
+        return batch_mark_block_issues(req, content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("block issue batch unexpected error, project=%s, filename=%s", projectKey, file.filename)
+        raise HTTPException(status_code=500, detail="批量 Block 标记过程中发生服务异常，请稍后重试")
+
+
+@app.get("/api/block-issues/template")
+def block_issue_template():
+    data = build_block_template()
+    filename = f"block-issues-template.{date.today().isoformat()}.xlsx"
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/projects/cached", response_model=list[ProjectSummary])

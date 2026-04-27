@@ -259,6 +259,49 @@ class JiraFetchDebugInfo(BaseModel):
     error: str = ""
 
 
+class BlockIssueSearchRequest(JiraFetchRequest):
+    pass
+
+
+class BlockIssueRow(BaseModel):
+    key: str
+    summary: str = ""
+    ipr: Optional[float] = None
+    mainCeaComment: str = ""
+    additionalCeaComment: str = ""
+    deadline: str = ""
+
+
+class BlockIssueSearchResult(BaseModel):
+    projectKey: str
+    jql: str
+    total: int
+    issues: List[BlockIssueRow] = Field(default_factory=list)
+
+
+class BlockIssueMarkRequest(JiraFetchRequest):
+    issueKey: str = Field(min_length=1)
+    mainCeaComment: str = "BLOCK"
+    additionalCeaComment: str = ""
+    deadline: str = ""
+    comment: str = ""
+
+
+class BlockIssueMarkResult(BaseModel):
+    issueKey: str
+    status: Literal["updated", "skipped", "failed"]
+    message: str
+    commentStatus: Literal["not_requested", "added", "failed"] = "not_requested"
+
+
+class BlockIssueBatchResult(BaseModel):
+    totalRows: int
+    updated: int
+    skipped: int
+    failed: int
+    results: List[BlockIssueMarkResult] = Field(default_factory=list)
+
+
 class BugDistCreateTaskRequest(BaseModel):
     primaryProjectKey: str = Field(min_length=1)
     compareProjectKey: str = ""

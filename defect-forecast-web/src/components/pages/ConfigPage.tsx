@@ -134,6 +134,20 @@ export function ConfigPage() {
                 placeholder="输入 PAT 或密码"
               />
             </div>
+            <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
+              <Checkbox
+                id="jira-verify-ssl"
+                checked={jiraConnection.verifySsl}
+                onCheckedChange={(checked) => setJiraConnection({ verifySsl: checked === true })}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <Label htmlFor="jira-verify-ssl">校验 HTTPS 证书</Label>
+                <p className="text-xs leading-5 text-slate-500">
+                  公司内网 Jira 或代理证书未被当前 Python 环境信任时，可临时关闭后再测试连接。
+                </p>
+              </div>
+            </div>
             <div className="flex gap-3 md:col-span-2">
               <Button
                 type="button"

@@ -3,6 +3,7 @@ import {
   LayoutPanelLeft,
   FolderKanban,
   Settings,
+  ShieldAlert,
   Wand2,
 } from 'lucide-react'
 import type { AppSection } from '@/stores/projectStore'
@@ -11,6 +12,7 @@ const items: { key: AppSection; label: string; Icon: typeof Settings }[] = [
   { key: 'projectHub', label: '项目库', Icon: FolderKanban },
   { key: 'forecastInput', label: '新项目预测', Icon: Wand2 },
   { key: 'forecastResult', label: '预测结果', Icon: BarChart3 },
+  { key: 'blockIssues', label: 'Block问题', Icon: ShieldAlert },
   { key: 'config', label: '系统配置', Icon: Settings },
 ]
 

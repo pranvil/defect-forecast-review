@@ -24,6 +24,11 @@ const ParamsPage = lazy(async () => {
   return { default: mod.ParamsPage }
 })
 
+const BlockIssuesPage = lazy(async () => {
+  const mod = await import('@/components/pages/BlockIssuesPage')
+  return { default: mod.BlockIssuesPage }
+})
+
 export default function App() {
   const activeSection = useProjectStore((s) => s.activeSection)
   const setActiveSection = useProjectStore((s) => s.setActiveSection)
@@ -39,6 +44,7 @@ export default function App() {
             {activeSection === 'projectHub' && <ProjectHubPage />}
             {activeSection === 'forecastInput' && <ParamsPage />}
             {activeSection === 'forecastResult' && <ForecastPage />}
+            {activeSection === 'blockIssues' && <BlockIssuesPage />}
           </Suspense>
         </main>
       </div>

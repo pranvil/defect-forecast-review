@@ -56,7 +56,12 @@ def _context_from_fetch(req: JiraFetchRequest) -> JiraRequestContext:
     )
 
 
-def _do_json_request(ctx: JiraRequestContext, target: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _do_json_request(
+    ctx: JiraRequestContext,
+    target: str,
+    payload: dict[str, Any] | None = None,
+    method: str = "POST",
+) -> dict[str, Any]:
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -66,8 +71,8 @@ def _do_json_request(ctx: JiraRequestContext, target: str, payload: dict[str, An
     request = urllib.request.Request(
         target,
         headers=headers,
-        method="POST",
-        data=json.dumps(payload).encode("utf-8"),
+        method=method,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
     )
     ssl_context = None
     if not ctx.verify_ssl:
@@ -93,7 +98,7 @@ def _do_json_request(ctx: JiraRequestContext, target: str, payload: dict[str, An
             detail = e.read().decode("utf-8", errors="replace").strip()
         except Exception:
             detail = ""
-        msg = f"Jira search 请求失败: HTTP {e.code}"
+        msg = f"Jira 请求失败: HTTP {e.code}"
         if detail:
             msg = f"{msg} {detail[:260]}"
         logger.warning("jira http error, status=%s, target=%s, detail=%s", e.code, target, detail[:260])
@@ -105,6 +110,32 @@ def _do_json_request(ctx: JiraRequestContext, target: str, payload: dict[str, An
     except (TimeoutError, socket.timeout) as e:
         logger.warning("jira timeout, target=%s, timeout=%s", target, ctx.timeout_sec)
         raise ValueError(f"Jira 请求超时（>{ctx.timeout_sec}s），请稍后重试或增大超时设置") from e
+
+
+def jira_get(req: JiraFetchRequest, path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
+    if req.authType == "basic" and not req.username.strip():
+        raise ValueError("Basic Auth 需要用户名")
+    ctx = _context_from_fetch(req)
+    target = urllib.parse.urljoin(f"{ctx.base_url}/", path.lstrip("/"))
+    if query:
+        target = f"{target}?{urllib.parse.urlencode(query)}"
+    return _do_json_request(ctx, target, None, method="GET")
+
+
+def jira_put(req: JiraFetchRequest, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if req.authType == "basic" and not req.username.strip():
+        raise ValueError("Basic Auth 需要用户名")
+    ctx = _context_from_fetch(req)
+    target = urllib.parse.urljoin(f"{ctx.base_url}/", path.lstrip("/"))
+    return _do_json_request(ctx, target, payload, method="PUT")
+
+
+def jira_post(req: JiraFetchRequest, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if req.authType == "basic" and not req.username.strip():
+        raise ValueError("Basic Auth 需要用户名")
+    ctx = _context_from_fetch(req)
+    target = urllib.parse.urljoin(f"{ctx.base_url}/", path.lstrip("/"))
+    return _do_json_request(ctx, target, payload, method="POST")
 
 
 def _build_field_names(extra_fields: Iterable[str] | None) -> list[str]:

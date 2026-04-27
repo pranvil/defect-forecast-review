@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type AppSection = 'projectHub' | 'forecastInput' | 'forecastResult' | 'config'
+export type AppSection = 'projectHub' | 'forecastInput' | 'forecastResult' | 'blockIssues' | 'config'
 
 export type ProjectHubView = 'library' | 'import' | 'detail'
 export type ProjectDetailTab = 'overview' | 'trend' | 'team' | 'module' | 'compare' | 'info'
