@@ -361,16 +361,18 @@ export function useHistoryPageData() {
     const visibleWeekSet = new Set(visibleWeekly.map((row) => row.week))
     return {
       weekly: visibleWeekly,
-      createdTeams: (focus.createdTeams ?? []).map((row) => ({
-        team: row.team,
-        group: '测试团队',
-        values: visibleWeekIndexes.map((index) => row.values[index] ?? 0),
-      })),
-      fixedTeams: (focus.fixedTeams ?? []).map((row) => ({
-        team: row.team,
-        group: '开发团队',
-        values: visibleWeekIndexes.map((index) => row.values[index] ?? 0),
-      })),
+      createdTeams: aggregateTeamWeeklyRows(
+        focus.createdTeams ?? [],
+        visibleWeekIndexes,
+        '测试团队',
+        'testing'
+      ),
+      fixedTeams: aggregateTeamWeeklyRows(
+        focus.fixedTeams ?? [],
+        visibleWeekIndexes,
+        '开发团队',
+        'development'
+      ),
       milestones: (focus.milestones ?? []).filter((milestone) => visibleWeekSet.has(milestone.week)),
     }
   }, [focus, visibleWeekIndexes, visibleWeekly])
@@ -478,24 +480,18 @@ export function useHistoryPageData() {
   }, [compareDataWithDate])
 
   const focusWeekLabels = visibleWeekIndexes.map((index) => safeWeekly[index]!.weekLabel)
-  const testingTeamWeeklyRows = (focus?.createdTeams ?? [])
-    .map((t) => ({
-      team: t.team,
-      group: '测试提报',
-      values: visibleWeekIndexes.map((index) => t.values[index] ?? 0),
-      issueKeysByWeek: visibleWeekIndexes.map((index) => t.issueKeysByWeek?.[index] ?? []),
-      total: visibleWeekIndexes.reduce((sum, index) => sum + (t.values[index] ?? 0), 0),
-    }))
-    .sort((a, b) => b.total - a.total)
-  const devTeamWeeklyRows = (focus?.fixedTeams ?? [])
-    .map((t) => ({
-      team: t.team,
-      group: '开发解决',
-      values: visibleWeekIndexes.map((index) => t.values[index] ?? 0),
-      issueKeysByWeek: visibleWeekIndexes.map((index) => t.issueKeysByWeek?.[index] ?? []),
-      total: visibleWeekIndexes.reduce((sum, index) => sum + (t.values[index] ?? 0), 0),
-    }))
-    .sort((a, b) => b.total - a.total)
+  const testingTeamWeeklyRows = aggregateTeamWeeklyRows(
+    focus?.createdTeams ?? [],
+    visibleWeekIndexes,
+    '测试提报',
+    'testing'
+  )
+  const devTeamWeeklyRows = aggregateTeamWeeklyRows(
+    focus?.fixedTeams ?? [],
+    visibleWeekIndexes,
+    '开发解决',
+    'development'
+  )
 
   const visibleProjects = projects.filter((p) => {
     const q = projectFilter.trim().toLowerCase()
@@ -648,6 +644,24 @@ export function useHistoryPageData() {
       const devField = '"Assignee Team"'
       const isTesting = group === '测试提报'
       const field = isTesting ? testingField : devField
+
+      const isOther = isTesting ? team === TESTING_OTHER_TEAM : team === DEVELOPMENT_OTHER_TEAM
+      if (isOther) {
+        const knownAliases = isTesting ? TESTING_KNOWN_ALIASES : DEVELOPMENT_KNOWN_ALIASES
+        const excludeList = knownAliases.map(a => `"${escapeJqlValue(a)}"`).join(', ')
+        if (!excludeList) return `(${field} is EMPTY OR ${field} is not EMPTY)`
+        return `(${field} not in (${excludeList}) OR ${field} is EMPTY)`
+      }
+
+      const aliasMap = isTesting ? TESTING_TEAM_ALIAS_MAP : DEVELOPMENT_TEAM_ALIAS_MAP
+      const matchedCategory = aliasMap.find((row) => row.team === team)
+
+      if (matchedCategory) {
+        const includeList = matchedCategory.aliases.map((a) => `"${escapeJqlValue(a)}"`).join(', ')
+        if (!includeList) return `${field} is EMPTY AND ${field} is not EMPTY`
+        return `${field} in (${includeList})`
+      }
+
       const unknown = isTesting ? '测试未知团队' : '软件-未知团队'
       const unknownPrefix = `${unknown}-`
       if (team === unknown) return `${field} is EMPTY`
