@@ -282,6 +282,28 @@ export function businessWeekBoundsIso(week: string): { start: string; end: strin
   return { start: formatIsoDateLocal(start), end: formatIsoDateLocal(end) }
 }
 
+/** 业务周是否不早于 startDate（空 startDate 表示无下限） */
+export function isWeekVisibleFromDate(weekLabel: string, startDate: string): boolean {
+  const normalized = startDate.trim()
+  if (!normalized) return true
+  const bounds = businessWeekBoundsIso(weekLabel)
+  if (!bounds?.start) return true
+  return bounds.start >= normalized
+}
+
+/** 业务周是否不晚于 endDate（空 endDate 表示无上限） */
+export function isWeekVisibleToDate(weekLabel: string, endDate: string): boolean {
+  const normalized = endDate.trim()
+  if (!normalized) return true
+  const bounds = businessWeekBoundsIso(weekLabel)
+  if (!bounds?.start) return true
+  return bounds.start <= normalized
+}
+
+export function isWeekVisibleInRange(weekLabel: string, startDate: string, endDate: string): boolean {
+  return isWeekVisibleFromDate(weekLabel, startDate) && isWeekVisibleToDate(weekLabel, endDate)
+}
+
 export function listYearWeekLabels(year = 2026): string[] {
   const labels: string[] = []
   for (let w = 1; w <= 53; w += 1) {

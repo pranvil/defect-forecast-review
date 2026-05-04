@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -48,23 +49,20 @@ import {
   type ProjectMetadataColumnId,
   formatProjectMetadataCell,
 } from '@/utils/projectMetadataColumns'
-
-const PROJECT_CATEGORY_OPTIONS = [
-  'SOC',
-  'NPI leading',
-  'Variant',
-  'OS Update',
-  '中国区定制',
-  'IDH联合项目',
-  'IDH全O',
-  '其他',
-]
-const REGION_OPTIONS = ['US', 'NA OM', 'GL', 'All', '其他']
-const OS_OPTIONS = ['Android', 'Kaios', 'AOSP', '其他']
-const DEVICE_TYPE_OPTIONS = ['Smart phone', 'Feature phone', 'Tablet', 'POS', '其他']
-const CHIPSET_STATUS_OPTIONS = ['Old_MTK', 'New_MTK', 'Old_Qualcomm', 'New_Qualcomm']
-const PIPELINE_OPTIONS = ['冒烟', '全部', '无']
-const SUPPORT_SIM_OPTIONS = ['Yes', 'No'] as const
+import {
+  CHIPSET_STATUS_OPTIONS,
+  DEVICE_TYPE_OPTIONS,
+  IDH_VENDOR_OPTIONS,
+  OPERATOR_OPTIONS,
+  OS_OPTIONS,
+  PIPELINE_OPTIONS,
+  PROJECT_CATEGORY_OPTIONS,
+  REGION_OPTIONS,
+  SUPPORT_SIM_OPTIONS,
+  USER_PROGRAM_OPTIONS,
+} from '@/utils/projectOptions'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { isWeekVisibleInRange } from '@/utils/week'
 
 const emptyDraft = (): ProjectSummary => ({
   name: '',
@@ -214,9 +212,12 @@ export function HistoricalProjectMetadataCard() {
   const [draft, setDraft] = React.useState<ProjectSummary>(emptyDraft())
   const [isOpen, setIsOpen] = React.useState(false)
   const [editingName, setEditingName] = React.useState<string | null>(null)
+  const [isSaving, setIsSaving] = React.useState(false)
+  const [isImporting, setIsImporting] = React.useState(false)
   const [visibleColumnIds, setVisibleColumnIds] = React.useState<ProjectMetadataColumnId[]>(
     DEFAULT_PROJECT_METADATA_COLUMN_IDS,
   )
+  const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const fileInputRef = React.useRef<HTMLInputElement | null>(null)
   const visibleColumns = React.useMemo(
     () => PROJECT_METADATA_COLUMNS.filter((column) => visibleColumnIds.includes(column.id)),
@@ -252,26 +253,86 @@ export function HistoricalProjectMetadataCard() {
       toast('保存失败', { description: '请填写项目 Key' })
       return
     }
+    if (!editingName && !next.validStartDate?.trim()) {
+      toast('保存失败', { description: '请填写有效开始日期（用于统计 Defect 数）' })
+      return
+    }
+    if (!editingName && next.validStartDate?.trim() && next.validEndDate?.trim() && next.validStartDate > next.validEndDate) {
+      toast('保存失败', { description: '有效开始日期不能晚于有效结束日期' })
+      return
+    }
+    if (isSaving) return
+
+    const todayIso = new Date().toISOString().slice(0, 10)
+    const effectiveEndDate = next.validEndDate?.trim() || todayIso
+
     const rowsToSave =
       editingName && editingName !== next.name
         ? rows.filter((row) => row.name !== editingName).concat(next)
         : [next]
-    void services.projectService
-      .upsertCachedProjects(rowsToSave)
-      .then(refresh)
-      .then(() => {
-        if (editingName && editingName !== next.name) {
-          return services.projectService.deleteCachedProject(editingName).then(refresh)
+    setIsSaving(true)
+    void (async () => {
+      try {
+        // 仅新增时自动复用“导入项目”逻辑从 Jira 拉取数据并按有效开始日期统计缺陷数
+        if (!editingName) {
+          let res: Awaited<ReturnType<typeof services.jiraService.fetchByJql>>
+          try {
+            res = await services.jiraService.fetchByJql({
+              projectKey: next.name,
+              startWeek: '',
+              endWeek: '',
+              pullMode: 'projectStart',
+              jql: '',
+              startDate: '',
+              endDate: '',
+              mode: 'normal',
+              ...jiraConnection,
+            })
+          } catch (err: unknown) {
+            toast('Jira 同步失败', { description: err instanceof Error ? err.message : '服务调用失败' })
+            return
+          }
+
+          let defectsFromRange: number | null = null
+          try {
+            const history = await services.projectService.getProjectHistory(next.name)
+            const weekly = history.weekly ?? []
+            const startDate = next.validStartDate?.trim() || ''
+            if (startDate) {
+              defectsFromRange = weekly.reduce((acc, row) => {
+                if (isWeekVisibleInRange(row.weekLabel, startDate, effectiveEndDate)) {
+                  return acc + (Number.isFinite(row.created) ? row.created : 0)
+                }
+                return acc
+              }, 0)
+            }
+          } catch {
+            // ignore history aggregation failure; fall back to Jira fetchedCount
+          }
+
+          const defects = defectsFromRange ?? res.fetchedCount
+          rowsToSave[0] = {
+            ...rowsToSave[0],
+            cycle: res.cycleLabel.replace(' - ', '-'),
+            defects,
+            teams: Math.max(1, Math.round(defects / 200)),
+          }
         }
-        return undefined
-      })
-      .then(() => {
+
+        await services.projectService.upsertCachedProjects(rowsToSave)
+        await refresh()
+        if (editingName && editingName !== next.name) {
+          await services.projectService.deleteCachedProject(editingName)
+          await refresh()
+        }
         toast('已保存历史项目元数据', { description: next.name })
         setIsOpen(false)
-      })
-      .catch((e: unknown) => {
+      } catch (e: unknown) {
         toast('保存失败', { description: e instanceof Error ? e.message : '服务不可用' })
-      })
+      } finally {
+        setIsSaving(false)
+      }
+    })()
   }
 
   return (
@@ -309,9 +370,15 @@ export function HistoricalProjectMetadataCard() {
               <Plus className="mr-2 h-4 w-4" />
               新增项目
             </Button>
-            <Button type="button" variant="outline" className="rounded-2xl" onClick={() => fileInputRef.current?.click()}>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-2xl"
+              disabled={isImporting}
+              onClick={() => fileInputRef.current?.click()}
+            >
               <Upload className="mr-2 h-4 w-4" />
-              导入
+              {isImporting ? '同步中...' : '导入'}
             </Button>
             <Button
               type="button"
@@ -340,20 +407,99 @@ export function HistoricalProjectMetadataCard() {
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (!file) return
+                if (isImporting) return
+                setIsImporting(true)
                 void file
                   .text()
-                  .then((text) => {
+                  .then(async (text) => {
                     const imported = rowsFromImport(text)
                     if (!imported.length) {
                       toast('导入失败', { description: '没有识别到有效项目行' })
                       return
                     }
-                    return services.projectService.upsertCachedProjects(imported).then(refresh).then(() => {
-                      toast('已导入历史项目元数据', { description: `共 ${imported.length} 行` })
-                    })
+
+                    const todayIso = new Date().toISOString().slice(0, 10)
+                    const processed: ProjectSummary[] = []
+                    const failures: string[] = []
+
+                    toast('开始批量同步 Jira', { description: `共 ${imported.length} 行` })
+
+                    for (let idx = 0; idx < imported.length; idx += 1) {
+                      const row = imported[idx]!
+                      const key = row.name.trim().toUpperCase()
+                      if (!key) continue
+                      if (row.validStartDate?.trim() && row.validEndDate?.trim() && row.validStartDate > row.validEndDate) {
+                        failures.push(`${key}: 有效开始日期不能晚于有效结束日期`)
+                        processed.push(row)
+                        continue
+                      }
+                      try {
+                        const res = await services.jiraService.fetchByJql({
+                          projectKey: key,
+                          startWeek: '',
+                          endWeek: '',
+                          pullMode: 'projectStart',
+                          jql: '',
+                          startDate: '',
+                          endDate: '',
+                          mode: 'normal',
+                          ...jiraConnection,
+                        })
+
+                        const startDate = row.validStartDate?.trim() || ''
+                        const endDate = row.validEndDate?.trim() || todayIso
+
+                        let defects = res.fetchedCount
+                        let validStartDate = row.validStartDate
+                        let validEndDate = row.validEndDate
+
+                        if (startDate) {
+                          const history = await services.projectService.getProjectHistory(key)
+                          defects = (history.weekly ?? []).reduce((acc, w) => {
+                            if (isWeekVisibleInRange(w.weekLabel, startDate, endDate)) {
+                              return acc + (Number.isFinite(w.created) ? w.created : 0)
+                            }
+                            return acc
+                          }, 0)
+                        } else {
+                          // 若导入行未提供有效开始日期，则对齐导入项目逻辑：用 Jira 返回的周期反填
+                          validStartDate = res.periodStart ? res.periodStart.slice(0, 10) : row.validStartDate
+                          validEndDate = res.periodEnd ? res.periodEnd.slice(0, 10) : row.validEndDate
+                        }
+
+                        processed.push(
+                          normalizeRow({
+                            ...row,
+                            name: key,
+                            cycle: res.cycleLabel.replace(' - ', '-'),
+                            defects,
+                            teams: Math.max(1, Math.round(defects / 200)),
+                            validStartDate,
+                            validEndDate,
+                          }),
+                        )
+                      } catch (err: unknown) {
+                        failures.push(`${key}: ${err instanceof Error ? err.message : 'Jira 同步失败'}`)
+                        processed.push(row)
+                      }
+                    }
+
+                    await services.projectService.upsertCachedProjects(processed)
+                    await refresh()
+
+                    if (failures.length) {
+                      toast('批量导入完成（有失败）', {
+                        description: `成功 ${processed.length - failures.length} / 失败 ${failures.length}；示例：${failures[0]}`,
+                      })
+                    } else {
+                      toast('已导入历史项目元数据', { description: `共 ${processed.length} 行` })
+                    }
                   })
                   .catch((err: unknown) => {
                     toast('导入失败', { description: err instanceof Error ? err.message : '文件解析失败' })
+                  })
+                  .finally(() => {
+                    setIsImporting(false)
                   })
                 e.target.value = ''
               }}
@@ -441,6 +587,7 @@ export function HistoricalProjectMetadataCard() {
             <SelectField label="设备类型" value={draft.deviceType ?? ''} options={DEVICE_TYPE_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, deviceType: v }))} />
             <SelectField label="芯片状态" value={draft.chipsetStatus ?? ''} options={CHIPSET_STATUS_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, chipsetStatus: v }))} />
             <SelectField label="流水线" value={draft.pipeline ?? ''} options={PIPELINE_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, pipeline: v }))} />
+            <SelectField label="外包商" value={draft.idhVendor ?? ''} options={IDH_VENDOR_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, idhVendor: v }))} />
             <div className="space-y-2">
               <Label>投入人力 MM</Label>
               <Input type="number" value={draft.mm ?? ''} onChange={(e) => setDraft((s) => ({ ...s, mm: parseNumber(e.target.value) }))} />
@@ -449,7 +596,7 @@ export function HistoricalProjectMetadataCard() {
               <Label>需求量</Label>
               <Input type="number" value={draft.frQuantity ?? ''} onChange={(e) => setDraft((s) => ({ ...s, frQuantity: parseNumber(e.target.value) }))} />
             </div>
-            <SelectField label="支持SIM卡" value={draft.supportSim ?? ''} options={[...SUPPORT_SIM_OPTIONS]} onChange={(v) => setDraft((s) => ({ ...s, supportSim: v === 'No' ? 'No' : v === 'Yes' ? 'Yes' : undefined }))} />
+            <SelectField label="支持SIM卡" value={draft.supportSim ?? ''} options={SUPPORT_SIM_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, supportSim: v === 'No' ? 'No' : v === 'Yes' ? 'Yes' : undefined }))} />
             <div className="space-y-2">
               <Label>有效开始日期</Label>
               <Input type="date" value={draft.validStartDate ?? ''} onChange={(e) => setDraft((s) => ({ ...s, validStartDate: e.target.value }))} />
@@ -457,6 +604,60 @@ export function HistoricalProjectMetadataCard() {
             <div className="space-y-2">
               <Label>有效结束日期</Label>
               <Input type="date" value={draft.validEndDate ?? ''} onChange={(e) => setDraft((s) => ({ ...s, validEndDate: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-3">
+              <Label>运营商</Label>
+              <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-4">
+                {OPERATOR_OPTIONS.map((option) => (
+                  <label key={option} className="flex items-center gap-2">
+                    <Checkbox
+                      checked={(draft.operators ?? []).includes(option)}
+                      onCheckedChange={(checked) =>
+                        setDraft((s) => {
+                          const current = s.operators ?? []
+                          return {
+                            ...s,
+                            operators:
+                              checked === true
+                                ? current.includes(option)
+                                  ? current
+                                  : [...current, option]
+                                : current.filter((x) => x !== option),
+                          }
+                        })
+                      }
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2 md:col-span-3">
+              <Label>用户测试</Label>
+              <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-4">
+                {USER_PROGRAM_OPTIONS.map((option) => (
+                  <label key={option} className="flex items-center gap-2">
+                    <Checkbox
+                      checked={(draft.userPrograms ?? []).includes(option)}
+                      onCheckedChange={(checked) =>
+                        setDraft((s) => {
+                          const current = s.userPrograms ?? []
+                          return {
+                            ...s,
+                            userPrograms:
+                              checked === true
+                                ? current.includes(option)
+                                  ? current
+                                  : [...current, option]
+                                : current.filter((x) => x !== option),
+                          }
+                        })
+                      }
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="space-y-2">
               <Label>周期</Label>
@@ -478,8 +679,8 @@ export function HistoricalProjectMetadataCard() {
             <Button type="button" variant="outline" className="rounded-2xl" onClick={() => setIsOpen(false)}>
               取消
             </Button>
-            <Button type="button" className="rounded-2xl" onClick={saveDraft}>
-              保存
+            <Button type="button" className="rounded-2xl" onClick={saveDraft} disabled={isSaving}>
+              {isSaving ? '同步中...' : '保存'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -496,7 +697,7 @@ function SelectField({
 }: {
   label: string
   value: string
-  options: string[]
+  options: readonly string[]
   onChange: (value: string) => void
 }) {
   return (

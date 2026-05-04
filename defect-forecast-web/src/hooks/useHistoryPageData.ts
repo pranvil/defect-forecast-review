@@ -21,7 +21,12 @@ import {
   toggleFavoriteProjectKey,
 } from '@/utils/projectLibrary'
 import { PROJECT_METADATA_COLUMNS, formatProjectMetadataCell } from '@/utils/projectMetadataColumns'
-import { addCalendarDaysIso, businessWeekBoundsIso, firstDayDateOfWeek } from '@/utils/week'
+import {
+  addCalendarDaysIso,
+  businessWeekBoundsIso,
+  firstDayDateOfWeek,
+  isWeekVisibleInRange,
+} from '@/utils/week'
 
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
@@ -39,26 +44,6 @@ function isCompareCalendarWindow(value: unknown): value is CompareCalendarWindow
 
 function isCompareRelativeLength(value: unknown): value is CompareRelativeLength {
   return value === 'full' || value === 'shortest'
-}
-
-function isWeekVisibleFromDate(weekLabel: string, startDate: string): boolean {
-  const normalized = startDate.trim()
-  if (!normalized) return true
-  const bounds = businessWeekBoundsIso(weekLabel)
-  if (!bounds?.start) return true
-  return bounds.start >= normalized
-}
-
-function isWeekVisibleToDate(weekLabel: string, endDate: string): boolean {
-  const normalized = endDate.trim()
-  if (!normalized) return true
-  const bounds = businessWeekBoundsIso(weekLabel)
-  if (!bounds?.start) return true
-  return bounds.start <= normalized
-}
-
-function isWeekVisibleInRange(weekLabel: string, startDate: string, endDate: string): boolean {
-  return isWeekVisibleFromDate(weekLabel, startDate) && isWeekVisibleToDate(weekLabel, endDate)
 }
 
 function addOneYearIso(isoDate: string): string {
@@ -256,6 +241,8 @@ export function useHistoryPageData() {
   const focus = focusDataset
   const safeWeekly = React.useMemo(() => focus?.weekly ?? [], [focus])
   const defaultAnalysisStartDate = React.useMemo(() => {
+    const meta = focus?.validStartDate?.trim()
+    if (meta) return meta
     let minStart = ''
     safeWeekly.forEach((row) => {
       const start = businessWeekBoundsIso(row.weekLabel)?.start ?? ''
@@ -263,13 +250,17 @@ export function useHistoryPageData() {
       if (!minStart || start < minStart) minStart = start
     })
     return minStart
-  }, [safeWeekly])
-  const defaultAnalysisEndDate = React.useMemo(
-    () => (defaultAnalysisStartDate ? addOneYearIso(defaultAnalysisStartDate) : ''),
-    [defaultAnalysisStartDate],
-  )
+  }, [focus?.validStartDate, safeWeekly])
+  const defaultAnalysisEndDate = React.useMemo(() => {
+    const meta = focus?.validEndDate?.trim()
+    if (meta) return meta
+    return defaultAnalysisStartDate ? addOneYearIso(defaultAnalysisStartDate) : ''
+  }, [focus?.validEndDate, defaultAnalysisStartDate])
   const effectiveAnalysisStartDate = analysisStartDateOverride.trim() || defaultAnalysisStartDate
-  const effectiveAnalysisEndDate = analysisEndDateOverride.trim() || addOneYearIso(effectiveAnalysisStartDate)
+  const effectiveAnalysisEndDate =
+    analysisEndDateOverride.trim() ||
+    focus?.validEndDate?.trim() ||
+    addOneYearIso(effectiveAnalysisStartDate)
   const visibleWeekIndexes = React.useMemo(() => {
     if (!safeWeekly.length) return []
     return safeWeekly.reduce<number[]>((acc, row, idx) => {

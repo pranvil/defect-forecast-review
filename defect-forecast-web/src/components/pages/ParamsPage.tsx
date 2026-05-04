@@ -45,6 +45,18 @@ import {
 import { formatProjectLabel } from '@/utils/projectLibrary'
 import { defectInputFromParams, findTopSimilarProjects } from '@/utils/defectCalculation'
 import {
+  CHIPSET_STATUS_OPTIONS,
+  DEVICE_TYPE_OPTIONS,
+  IDH_VENDOR_OPTIONS,
+  OPERATOR_OPTIONS,
+  OS_OPTIONS,
+  PIPELINE_OPTIONS,
+  PROJECT_CATEGORY_OPTIONS,
+  REGION_OPTIONS,
+  SUPPORT_SIM_OPTIONS,
+  USER_PROGRAM_OPTIONS,
+} from '@/utils/projectOptions'
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -54,38 +66,6 @@ import {
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
 type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
-
-const PROJECT_CATEGORY_OPTIONS = [
-  'SOC',
-  'NPI leading',
-  'Variant',
-  'OS Update',
-  '中国区定制',
-  'IDH联合项目',
-  'IDH全O',
-  '其他',
-]
-const REGION_OPTIONS = ['US', 'NA OM', 'GL', 'All', '其他']
-const OS_OPTIONS = ['Android', 'Kaios', 'AOSP', '其他']
-const DEVICE_TYPE_OPTIONS = ['Smart phone', 'Feature phone', 'Tablet', 'POS', '其他']
-const CHIPSET_STATUS_OPTIONS = ['Old_MTK', 'New_MTK', 'Old_Qualcomm', 'New_Qualcomm']
-const OPERATOR_OPTIONS = [
-  'US_VZW',
-  'US_TMO',
-  'US_ATT',
-  'US_USCC',
-  'US_DISH',
-  'US_Spectrum',
-  'CA_Rogers',
-  'CA_Bell',
-  'CA_Telus',
-  'CA_Quebecor',
-  '其他',
-]
-const USER_PROGRAM_OPTIONS = ['IUT', 'FUT', '内测', '体验']
-const IDH_VENDOR_OPTIONS = ['麦博', '驰腾', '传佳音', '英卡', '其他']
-const PIPELINE_OPTIONS = ['冒烟', '全部', '无']
-const SUPPORT_SIM_OPTIONS = ['Yes', 'No'] as const
 
 const emptyMilestoneRates = (): MilestoneRatesForm => ({
   dev: '',
