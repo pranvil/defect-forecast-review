@@ -145,14 +145,47 @@ TESTING_TEAM_UNKNOWN = "测试未知团队"
 DEV_TEAM_UNKNOWN = "软件-未知团队"
 
 
+def _extract_reporter_identity(issue: dict[str, object]) -> str:
+    reporter = _get_issue_fields(issue).get("reporter")
+    if not isinstance(reporter, dict):
+        return ""
+    for key in ("name", "key", "accountId", "emailAddress", "displayName"):
+        value = reporter.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if key == "emailAddress" and "@" in text:
+                return text.split("@", 1)[0].strip() or text
+            return text
+    return ""
+
+
+def _is_unknown_team_name(team_name: str) -> bool:
+    normalized = team_name.strip().lower()
+    if not normalized:
+        return True
+    if normalized in {"(empty)", "(none)", "unknown", "unk", "未知"}:
+        return True
+    return "未知团队" in normalized or "unknown team" in normalized
+
+
+def _resolve_unknown_team_bucket(team_name: str, reporter: str, unknown_label: str) -> str:
+    team = team_name.strip()
+    if not _is_unknown_team_name(team):
+        return team
+    actor = reporter.strip()
+    if actor:
+        return f"{unknown_label}-{actor}"
+    return f"{unknown_label}-(unknown-reporter)"
+
+
 def _normalize_reporter_team(issue: dict[str, object], field_path: str) -> str:
     t = _extract_issue_team(issue, field_path).strip()
-    return t if t else TESTING_TEAM_UNKNOWN
+    return _resolve_unknown_team_bucket(t, _extract_reporter_identity(issue), TESTING_TEAM_UNKNOWN)
 
 
 def _normalize_assignee_team(issue: dict[str, object], field_path: str) -> str:
     t = _extract_issue_team(issue, field_path).strip()
-    return t if t else DEV_TEAM_UNKNOWN
+    return _resolve_unknown_team_bucket(t, _extract_reporter_identity(issue), DEV_TEAM_UNKNOWN)
 
 
 def _hash_to_int(seed: str) -> int:
@@ -1212,6 +1245,7 @@ def jira_sync(req: JiraFetchRequest) -> JiraFetchResult:
     assignee_team_field = issue_fields["assigneeTeam"]
     fetch_fields = {
         "summary",
+        "reporter",
         verified_field,
         closed_field,
         deleted_field,

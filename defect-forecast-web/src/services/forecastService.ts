@@ -1,11 +1,12 @@
-import type { ForecastTeamRow, MilestoneParam, RefProjectRow } from '@/types/forecast'
+import type {
+  ForecastProjectParams,
+  ForecastTeamRow,
+  MilestoneParam,
+  RefProjectRow,
+} from '@/types/forecast'
 import type { WeeklyPoint } from '@/types/project'
 
-export interface ForecastParams {
-  newProjectName: string
-  startWeek: string
-  endWeek: string
-}
+export type ForecastParams = ForecastProjectParams
 
 export interface ForecastInput {
   params: ForecastParams
@@ -47,4 +48,3 @@ export interface ForecastService {
   listForecastVersions(projectName?: string): Promise<ForecastVersionRow[]>
   deleteForecastVersion(id: string): Promise<void>
 }
-

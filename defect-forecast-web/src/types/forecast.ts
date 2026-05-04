@@ -21,3 +21,20 @@ export interface ForecastTeamRow {
   group: string
   values: number[]
 }
+
+export interface ForecastProjectParams {
+  newProjectName: string
+  startWeek: string
+  endWeek: string
+  projectCategory: string
+  region: string
+  os: string
+  deviceType: string
+  chipsetStatus: string
+  operators: string[]
+  userPrograms: string[]
+  idhVendor: string
+  frQuantity: number
+  mm: number
+  supportSim: 'Yes' | 'No'
+}

@@ -25,7 +25,8 @@ import { addCalendarDaysIso, businessWeekBoundsIso, firstDayDateOfWeek } from '@
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
 const DEFAULT_JIRA_BASE_URL = 'https://jira.tcl.com'
-const JIRA_ISSUE_TYPE_CLAUSE = 'issuetype in (defect, defect_new)'
+const JIRA_PROJECT_FETCH_FILTER_CLAUSE =
+  'issuetype in (defect, defect_new) AND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED") AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR")'
 
 function isCompareAxisMode(value: unknown): value is CompareAxisMode {
   return value === 'calendar' || value === 'relative'
@@ -583,7 +584,15 @@ export function useHistoryPageData() {
       const isTesting = group === '测试提报'
       const field = isTesting ? testingField : devField
       const unknown = isTesting ? '测试未知团队' : '软件-未知团队'
+      const unknownPrefix = `${unknown}-`
       if (team === unknown) return `${field} is EMPTY`
+      if (team.startsWith(unknownPrefix)) {
+        const reporter = team.slice(unknownPrefix.length).trim()
+        if (reporter && reporter !== '(unknown-reporter)') {
+          return `${field} is EMPTY AND reporter = "${escapeJqlValue(reporter)}"`
+        }
+        return `${field} is EMPTY`
+      }
       return `${field} = "${escapeJqlValue(team)}"`
     },
     [escapeJqlValue],
@@ -612,9 +621,9 @@ export function useHistoryPageData() {
       if (group === '测试提报') {
         const createdEndExclusive = addCalendarDaysIso(bounds.end, 1)
         const createdUpper = createdEndExclusive ? `created < "${createdEndExclusive}"` : `created <= "${bounds.end}"`
-        return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND created >= "${bounds.start}" AND ${createdUpper}`
+        return `${projectClause} AND ${JIRA_PROJECT_FETCH_FILTER_CLAUSE} AND (${teamClause}) AND created >= "${bounds.start}" AND ${createdUpper}`
       }
-      return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND (${buildFixedTimeRangeClause(bounds.start, bounds.end)})`
+      return `${projectClause} AND ${JIRA_PROJECT_FETCH_FILTER_CLAUSE} AND (${teamClause}) AND (${buildFixedTimeRangeClause(bounds.start, bounds.end)})`
     },
     [buildFixedTimeRangeClause, buildTeamClause, escapeJqlValue, focusProject],
   )
@@ -623,8 +632,8 @@ export function useHistoryPageData() {
     (group: string, team: string) => {
       const projectClause = `project = "${escapeJqlValue(focusProject)}"`
       const teamClause = buildTeamClause(group, team)
-      if (group === '测试提报') return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause})`
-      return `${projectClause} AND ${JIRA_ISSUE_TYPE_CLAUSE} AND (${teamClause}) AND ("last time to set verified_sw" is not EMPTY OR "1st time to set closed" is not EMPTY OR "1st time to set postponed" is not EMPTY OR "1st time to set deleted" is not EMPTY)`
+      if (group === '测试提报') return `${projectClause} AND ${JIRA_PROJECT_FETCH_FILTER_CLAUSE} AND (${teamClause})`
+      return `${projectClause} AND ${JIRA_PROJECT_FETCH_FILTER_CLAUSE} AND (${teamClause}) AND ("last time to set verified_sw" is not EMPTY OR "1st time to set closed" is not EMPTY OR "1st time to set postponed" is not EMPTY OR "1st time to set deleted" is not EMPTY)`
     },
     [buildTeamClause, escapeJqlValue, focusProject],
   )

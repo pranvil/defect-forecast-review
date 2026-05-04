@@ -8,6 +8,22 @@ import type { FieldMapping } from '@/types/settings'
 
 const FIELD_KEY = 'defectForecast.fieldMappings.v1'
 const FORECAST_KEY = 'defectForecast.forecastDefaults.v1'
+const DEFAULT_FORECAST_PARAMS: ForecastDefaultsPayload['params'] = {
+  newProjectName: 'Aurora NP TMO',
+  startWeek: '26W2',
+  endWeek: '26W27',
+  projectCategory: 'NPI leading',
+  region: 'US',
+  os: 'Android',
+  deviceType: 'Smart phone',
+  chipsetStatus: 'Old_MTK',
+  operators: [],
+  userPrograms: [],
+  idhVendor: '',
+  frQuantity: 0,
+  mm: 0,
+  supportSim: 'Yes',
+}
 
 function readFieldMappings(): FieldMapping[] {
   try {
@@ -44,11 +60,7 @@ function readForecastDefaults(): ForecastDefaultsPayload {
       return {
         refProjects: initialRefProjects,
         milestones: initialMilestones,
-        params: {
-          newProjectName: 'Aurora NP TMO',
-          startWeek: '26W2',
-          endWeek: '26W27',
-        },
+        params: DEFAULT_FORECAST_PARAMS,
       }
     }
     const parsed = JSON.parse(raw) as ForecastDefaultsPayload
@@ -58,11 +70,7 @@ function readForecastDefaults(): ForecastDefaultsPayload {
     return {
       refProjects: initialRefProjects,
       milestones: initialMilestones,
-      params: {
-        newProjectName: 'Aurora NP TMO',
-        startWeek: '26W2',
-        endWeek: '26W27',
-      },
+      params: DEFAULT_FORECAST_PARAMS,
     }
   }
 }

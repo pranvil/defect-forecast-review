@@ -12,7 +12,7 @@ import type { FieldMapping } from '@/types/settings'
 
 const DEFAULT_PRIMARY = 'MNTNPOM'
 const BUG_BOARD_CACHE_KEY = 'drp.bugBoard.cachedProjects.v1'
-const BUG_BOARD_RESULT_CACHE_KEY = 'drp.bugBoard.results.v1'
+const BUG_BOARD_RESULT_CACHE_KEY = 'drp.bugBoard.results.v3'
 const BUG_BOARD_PROJECT_NAMES_KEY = 'drp.bugBoard.projectNames.v1'
 const BUG_BOARD_MIX_MAP_KEY = 'drp.bugBoard.mixMap.v1'
 const BugBoardDistributionSection = React.lazy(async () => {

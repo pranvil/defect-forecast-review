@@ -2,8 +2,37 @@ import { create } from 'zustand'
 import { initialMilestones } from '@/data/mock/milestones'
 import { initialRefProjects } from '@/data/mock/refProjects'
 import { services } from '@/services'
-import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
+import type { ForecastProjectParams, MilestoneParam, RefProjectRow } from '@/types/forecast'
 import { compareWeekAsc } from '@/utils/week'
+
+export const defaultForecastParams: ForecastProjectParams = {
+  newProjectName: 'Aurora NP TMO',
+  startWeek: '26W2',
+  endWeek: '26W27',
+  projectCategory: 'NPI leading',
+  region: 'US',
+  os: 'Android',
+  deviceType: 'Smart phone',
+  chipsetStatus: 'Old_MTK',
+  operators: [],
+  userPrograms: [],
+  idhVendor: '',
+  frQuantity: 0,
+  mm: 0,
+  supportSim: 'Yes',
+}
+
+function normalizeForecastParams(params: Partial<ForecastProjectParams>): ForecastProjectParams {
+  return {
+    ...defaultForecastParams,
+    ...params,
+    operators: Array.isArray(params.operators) ? params.operators : [],
+    userPrograms: Array.isArray(params.userPrograms) ? params.userPrograms : [],
+    supportSim: params.supportSim === 'No' ? 'No' : 'Yes',
+    frQuantity: Number.isFinite(params.frQuantity) ? Number(params.frQuantity) : 0,
+    mm: Number.isFinite(params.mm) ? Number(params.mm) : 0,
+  }
+}
 
 type ForecastState = {
   hydrateDefaultsFromServer: () => Promise<void>
@@ -17,11 +46,7 @@ type ForecastState = {
   addMilestone: (row: MilestoneParam) => void
   updateMilestone: (index: number, row: MilestoneParam) => void
   removeMilestone: (index: number) => void
-  params: {
-    newProjectName: string
-    startWeek: string
-    endWeek: string
-  }
+  params: ForecastProjectParams
   setParams: (next: Partial<ForecastState['params']>) => void
 }
 
@@ -44,7 +69,7 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
     set({
       refProjects: payload.refProjects,
       milestones: payload.milestones.slice().sort((a, b) => compareWeekAsc(a.week, b.week)),
-      params: payload.params,
+      params: normalizeForecastParams(payload.params),
     })
   },
   refProjects: initialRefProjects,
@@ -101,11 +126,7 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
       queueMicrotask(() => saveForecastDefaults(get))
       return { milestones: next }
     }),
-  params: {
-    newProjectName: 'Aurora NP TMO',
-    startWeek: '26W2',
-    endWeek: '26W27',
-  },
+  params: defaultForecastParams,
   setParams: (next) =>
     set((s) => {
       const merged = { ...s.params, ...next }

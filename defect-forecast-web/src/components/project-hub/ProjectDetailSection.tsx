@@ -118,10 +118,10 @@ export function ProjectDetailSection({
               趋势
             </TabsTrigger>
             <TabsTrigger value="team" className="min-w-[108px] rounded-xl data-active:bg-slate-900 data-active:text-white">
-              Team分析
+              Team周分析
             </TabsTrigger>
             <TabsTrigger value="module" className="min-w-[108px] rounded-xl data-active:bg-slate-900 data-active:text-white">
-              模块分布
+              模块&Team分布查看
             </TabsTrigger>
             <TabsTrigger value="compare" className="min-w-[108px] rounded-xl data-active:bg-slate-900 data-active:text-white">
               对比分析

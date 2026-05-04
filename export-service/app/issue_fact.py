@@ -107,10 +107,9 @@ def _coerce_jira_datetime_string(raw: Any) -> str:
 
 
 def _enrich_issue_row_from_stored_raw(issue: dict[str, Any]) -> dict[str, Any]:
-    """若行内 created_at 不可解析，尝试从入库的 raw_fields_json 补回 created。"""
+    """从入库的 raw_fields_json 补回 created/reporter 等派生字段。"""
     out = dict(issue)
-    if _parse_jira_datetime(str(out.get("created_at") or "").strip()):
-        return out
+    has_created = _parse_jira_datetime(str(out.get("created_at") or "").strip()) is not None
     rfj = out.get("raw_fields_json")
     if not rfj or not isinstance(rfj, str) or not rfj.strip():
         return out
@@ -120,9 +119,14 @@ def _enrich_issue_row_from_stored_raw(issue: dict[str, Any]) -> dict[str, Any]:
         return out
     if not isinstance(fields, dict):
         return out
-    created = _coerce_jira_datetime_string(fields.get("created"))
-    if created and _parse_jira_datetime(created):
-        out["created_at"] = created
+    if not has_created:
+        created = _coerce_jira_datetime_string(fields.get("created"))
+        if created and _parse_jira_datetime(created):
+            out["created_at"] = created
+    if not str(out.get("reporter") or "").strip():
+        reporter = _extract_actor_identity(fields.get("reporter"))
+        if reporter:
+            out["reporter"] = reporter
     return out
 
 
@@ -159,6 +163,38 @@ def _extract_named_value(raw: Any) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return ""
+
+
+def _extract_actor_identity(raw: Any) -> str:
+    if not isinstance(raw, dict):
+        return ""
+    for key in ("name", "key", "accountId", "emailAddress", "displayName"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if key == "emailAddress" and "@" in text:
+                return text.split("@", 1)[0].strip() or text
+            return text
+    return ""
+
+
+def _is_unknown_team_name(team_name: str) -> bool:
+    normalized = team_name.strip().lower()
+    if not normalized:
+        return True
+    if normalized in {"(empty)", "(none)", "unknown", "unk", "未知"}:
+        return True
+    return "未知团队" in normalized or "unknown team" in normalized
+
+
+def _resolve_unknown_team_bucket(team_name: str, reporter: str, unknown_label: str) -> str:
+    team = team_name.strip()
+    if not _is_unknown_team_name(team):
+        return team
+    actor = reporter.strip()
+    if actor:
+        return f"{unknown_label}-{actor}"
+    return f"{unknown_label}-(unknown-reporter)"
 
 
 def _extract_project_key(raw: Any) -> str:
@@ -262,6 +298,7 @@ def _requested_issue_fields(mapping_index: dict[str, str]) -> list[str]:
     extra = {
         "components",
         "issuetype",
+        "reporter",
         "status",
         "project",
         "updated",
@@ -303,6 +340,7 @@ def _normalize_issue(issue: dict[str, Any], mapping_index: dict[str, str], fallb
         "components": _extract_components(fields),
         "raw_fields_json": json_dumps(fields),
         "summary": str(fields.get("summary") or "").strip(),
+        "reporter": _extract_actor_identity(fields.get("reporter")),
         "assignee": _extract_named_value(fields.get("assignee")),
     }
 
@@ -426,14 +464,16 @@ def _build_weekly_rows(issues: list[dict[str, Any]]) -> tuple[list[WeeklyPoint],
         created_week = _business_week_label(_created_time_for_week_bucket(issue))
         if created_week:
             created_counts[created_week] = created_counts.get(created_week, 0) + 1
-            created_team = issue.get("reporter_team", "").strip() or UNKNOWN_CREATED_TEAM
+            reporter = str(issue.get("reporter") or "").strip()
+            created_team = _resolve_unknown_team_bucket(str(issue.get("reporter_team") or ""), reporter, UNKNOWN_CREATED_TEAM)
             created_team_counts.setdefault(created_week, {})[created_team] = created_team_counts.get(created_week, {}).get(created_team, 0) + 1
             created_issue_keys.setdefault(created_week, {}).setdefault(created_team, []).append(issue["issue_key"])
 
         fixed_week = _business_week_label(_fixed_time(issue))
         if fixed_week:
             fixed_counts[fixed_week] = fixed_counts.get(fixed_week, 0) + 1
-            fixed_team = issue.get("assignee_team", "").strip() or UNKNOWN_FIXED_TEAM
+            reporter = str(issue.get("reporter") or "").strip()
+            fixed_team = _resolve_unknown_team_bucket(str(issue.get("assignee_team") or ""), reporter, UNKNOWN_FIXED_TEAM)
             fixed_team_counts.setdefault(fixed_week, {})[fixed_team] = fixed_team_counts.get(fixed_week, {}).get(fixed_team, 0) + 1
             fixed_issue_keys.setdefault(fixed_week, {}).setdefault(fixed_team, []).append(issue["issue_key"])
 
@@ -528,12 +568,9 @@ def _upsert_project_summary(project_key: str, cycle_label: str, issues: list[dic
     active_issues = [issue for issue in issues if not issue.get("removed_at", "").strip()]
     teams = set()
     for issue in active_issues:
-        reporter = issue.get("reporter_team", "").strip()
-        assignee = issue.get("assignee_team", "").strip()
-        if reporter:
-            teams.add(reporter)
-        if assignee:
-            teams.add(assignee)
+        reporter = str(issue.get("reporter") or "").strip()
+        teams.add(_resolve_unknown_team_bucket(str(issue.get("reporter_team") or ""), reporter, UNKNOWN_CREATED_TEAM))
+        teams.add(_resolve_unknown_team_bucket(str(issue.get("assignee_team") or ""), reporter, UNKNOWN_FIXED_TEAM))
     synced_at = _utcnow_iso()
     with get_conn() as conn:
         existing = conn.execute("SELECT display_name, similarity FROM project_summary WHERE name = ?", (project_key,)).fetchone()

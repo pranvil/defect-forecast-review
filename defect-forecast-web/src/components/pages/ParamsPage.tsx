@@ -54,6 +54,37 @@ import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
 type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
 
+const PROJECT_CATEGORY_OPTIONS = [
+  'SOC',
+  'NPI leading',
+  'Variant',
+  'OS Update',
+  '中国区定制',
+  'IDH联合项目',
+  'IDH全O',
+  '其他',
+]
+const REGION_OPTIONS = ['US', 'NA OM', 'GL', 'All', '其他']
+const OS_OPTIONS = ['Android', 'Kaios', 'AOSP', '其他']
+const DEVICE_TYPE_OPTIONS = ['Smart phone', 'Feature phone', 'Tablet', 'POS', '其他']
+const CHIPSET_STATUS_OPTIONS = ['Old_MTK', 'New_MTK', 'Old_Qualcomm', 'New_Qualcomm']
+const OPERATOR_OPTIONS = [
+  'US_VZW',
+  'US_TMO',
+  'US_ATT',
+  'US_USCC',
+  'US_DISH',
+  'US_Spectrum',
+  'CA_Rogers',
+  'CA_Bell',
+  'CA_Telus',
+  'CA_Quebecor',
+  '其他',
+]
+const USER_PROGRAM_OPTIONS = ['IUT', 'FUT', '内测', '体验']
+const IDH_VENDOR_OPTIONS = ['麦博', '驰腾', '传佳音', '英卡', '其他']
+const SUPPORT_SIM_OPTIONS = ['Yes', 'No'] as const
+
 const emptyMilestoneRates = (): MilestoneRatesForm => ({
   dev: '',
   testComplete: '',
@@ -200,6 +231,17 @@ export function ParamsPage() {
     source: '手工添加',
   })
 
+  const toggleParamValue = (
+    key: 'operators' | 'userPrograms',
+    value: string,
+    checked: boolean,
+  ) => {
+    const current = params[key]
+    setParams({
+      [key]: checked ? Array.from(new Set([...current, value])) : current.filter((x) => x !== value),
+    })
+  }
+
   const autoIdentifyRefProjects = () => {
     const target = params.newProjectName.trim().toLowerCase()
     const byScore = allProjects
@@ -247,53 +289,216 @@ export function ParamsPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label>新项目名称</Label>
-              <Input
-                value={params.newProjectName}
-                onChange={(e) => setParams({ newProjectName: e.target.value })}
-              />
+          <CardContent className="space-y-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label>新项目名称</Label>
+                <Input
+                  value={params.newProjectName}
+                  onChange={(e) => setParams({ newProjectName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>开始周期</Label>
+                <Input
+                  value={params.startWeek}
+                  onChange={(e) => setParams({ startWeek: e.target.value })}
+                  placeholder="例如 26W2"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>结束周期</Label>
+                <Input
+                  value={params.endWeek}
+                  onChange={(e) => setParams({ endWeek: e.target.value })}
+                  placeholder="例如 26W27"
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>开始周期</Label>
-              <Input
-                value={params.startWeek}
-                onChange={(e) => setParams({ startWeek: e.target.value })}
-                placeholder="例如 26W2"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>结束周期</Label>
-              <Input
-                value={params.endWeek}
-                onChange={(e) => setParams({ endWeek: e.target.value })}
-                placeholder="例如 26W27"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>测试团队范围</Label>
-              <Select defaultValue="default">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">默认测试团队</SelectItem>
-                  <SelectItem value="subset">自定义子集</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>开发团队范围</Label>
-              <Select defaultValue="default">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">默认开发团队</SelectItem>
-                  <SelectItem value="subset">自定义子集</SelectItem>
-                </SelectContent>
-              </Select>
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="space-y-4">
+                <div className="text-sm font-medium text-slate-700">项目基础信息</div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>项目类别</Label>
+                    <Select
+                      value={params.projectCategory}
+                      onValueChange={(v) => setParams({ projectCategory: v ?? params.projectCategory })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROJECT_CATEGORY_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>目标区域</Label>
+                    <Select value={params.region} onValueChange={(v) => setParams({ region: v ?? params.region })}>
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REGION_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>操作系统</Label>
+                    <Select value={params.os} onValueChange={(v) => setParams({ os: v ?? params.os })}>
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {OS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>设备类型</Label>
+                    <Select
+                      value={params.deviceType}
+                      onValueChange={(v) => setParams({ deviceType: v ?? params.deviceType })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DEVICE_TYPE_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="text-sm font-medium text-slate-700">技术变量</div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>芯片状态</Label>
+                    <Select
+                      value={params.chipsetStatus}
+                      onValueChange={(v) => setParams({ chipsetStatus: v ?? params.chipsetStatus })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHIPSET_STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>外包商</Label>
+                    <Select
+                      value={params.idhVendor || '__none__'}
+                      onValueChange={(v) => setParams({ idhVendor: v === '__none__' || !v ? '' : v })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <span data-slot="select-value" className="flex flex-1 truncate text-left">
+                          {params.idhVendor || '未选择'}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">未选择</SelectItem>
+                        {IDH_VENDOR_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>需求量</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      step={1}
+                      value={String(params.frQuantity)}
+                      onChange={(e) => setParams({ frQuantity: Math.trunc(Number(e.target.value || 0)) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>投入人力</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      step={1}
+                      value={String(params.mm)}
+                      onChange={(e) => setParams({ mm: Math.trunc(Number(e.target.value || 0)) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>支持SIM卡</Label>
+                    <Select
+                      value={params.supportSim}
+                      onValueChange={(v) => setParams({ supportSim: v as (typeof SUPPORT_SIM_OPTIONS)[number] })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SUPPORT_SIM_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>运营商</Label>
+                    <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-3">
+                      {OPERATOR_OPTIONS.map((option) => (
+                        <label key={option} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={params.operators.includes(option)}
+                            onCheckedChange={(checked) => toggleParamValue('operators', option, checked === true)}
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>用户测试</Label>
+                    <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-4">
+                      {USER_PROGRAM_OPTIONS.map((option) => (
+                        <label key={option} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={params.userPrograms.includes(option)}
+                            onCheckedChange={(checked) => toggleParamValue('userPrograms', option, checked === true)}
+                          />
+                          <span>{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

@@ -1,11 +1,21 @@
 import { forecastCreatedTeams, forecastFixedTeams, forecastWeeklyBase } from '@/data/mock/forecast'
 import { delay } from '@/services/delay'
 import type { ForecastResult, ForecastService } from '@/services/forecastService'
+import { calculate_defects } from '@/utils/defectCalculation'
 import { compareWeekAsc, firstDayDateOfWeek, parseYearWeek, weekIndex } from '@/utils/week'
 
 export const forecastServiceMock: ForecastService = {
   async getForecastResult(input): Promise<ForecastResult> {
     await delay(180)
+    calculate_defects({
+      Project_category: input.params.projectCategory,
+      Operators: input.params.operators,
+      Chipset_Status: input.params.chipsetStatus,
+      User_Programs: input.params.userPrograms,
+      Support_SIM: input.params.supportSim,
+      MM: input.params.mm,
+      FR_Quantity: input.params.frQuantity,
+    })
 
     const startParsed = parseYearWeek(input.params.startWeek)
     const endParsed = parseYearWeek(input.params.endWeek)
@@ -146,4 +156,3 @@ export const forecastServiceMock: ForecastService = {
     await delay(40)
   },
 }
-

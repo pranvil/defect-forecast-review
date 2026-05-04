@@ -1,14 +1,10 @@
-import type { RefProjectRow, MilestoneParam } from '@/types/forecast'
+import type { ForecastProjectParams, RefProjectRow, MilestoneParam } from '@/types/forecast'
 import type { FieldMapping } from '@/types/settings'
 
 export interface ForecastDefaultsPayload {
   refProjects: RefProjectRow[]
   milestones: MilestoneParam[]
-  params: {
-    newProjectName: string
-    startWeek: string
-    endWeek: string
-  }
+  params: ForecastProjectParams
 }
 
 export interface ConfigService {

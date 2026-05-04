@@ -166,12 +166,13 @@ export function BugBoardDistributionSection({
           <div className="text-xs text-slate-500">最大 30，当前 {clampedTopN}</div>
         </div>
         <Tabs value={activeTab} onValueChange={(v) => onActiveTabChange(v as 'module' | 'team')} className="space-y-4">
+          <div className="text-sm font-medium text-slate-700">模块&Team分布查看</div>
           <TabsList variant="default" className="w-full justify-start rounded-xl border border-slate-200 bg-slate-100 p-1">
             <TabsTrigger value="module" className="min-w-[108px] rounded-lg data-active:bg-slate-900 data-active:text-white">
-              模块分布
+              模块
             </TabsTrigger>
             <TabsTrigger value="team" className="min-w-[108px] rounded-lg data-active:bg-slate-900 data-active:text-white">
-              Team 分布
+              Team
             </TabsTrigger>
           </TabsList>
           <TabsContent value="module" className="space-y-4">

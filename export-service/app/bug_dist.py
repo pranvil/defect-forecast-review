@@ -29,7 +29,7 @@ from app.models import (
 logger = logging.getLogger("drp.bug_dist")
 
 BUG_DIST_CACHE_DIRNAME = "bug_dist_cache"
-BUG_DIST_FIELD_VERSION = "issue-fact-v1"
+BUG_DIST_FIELD_VERSION = "issue-fact-v3"
 
 
 def _utcnow_iso() -> str:
@@ -205,11 +205,56 @@ def _extract_reporter_team(issue: dict[str, Any], team_field_path: str) -> str:
     return "(Empty)"
 
 
+def _extract_reporter_name(issue: dict[str, Any]) -> str:
+    fields = issue.get("fields") if isinstance(issue, dict) else None
+    if not isinstance(fields, dict):
+        return ""
+    reporter = fields.get("reporter")
+    if not isinstance(reporter, dict):
+        return ""
+    for key in ("name", "key", "accountId", "emailAddress", "displayName"):
+        value = reporter.get(key)
+        if isinstance(value, str) and value.strip():
+            raw = value.strip()
+            if key == "emailAddress" and "@" in raw:
+                return raw.split("@", 1)[0].strip() or raw
+            return raw
+    return ""
+
+
+def _is_unknown_team(team_name: str) -> bool:
+    normalized = team_name.strip().lower()
+    if not normalized:
+        return True
+    unknown_markers = {
+        "(empty)",
+        "(none)",
+        "unknown",
+        "unk",
+        "未知",
+    }
+    if normalized in unknown_markers:
+        return True
+    return "未知团队" in normalized or "unknown team" in normalized
+
+
+def _resolve_team_bucket(team_name: str, reporter_name: str) -> str:
+    team = team_name.strip()
+    if not _is_unknown_team(team):
+        return team
+    reporter = reporter_name.strip()
+    if reporter:
+        return f"测试未知团队-{reporter}"
+    return "测试未知团队-(unknown-reporter)"
+
+
 def _build_counters_from_remote_issues(issues: list[dict[str, Any]], team_field_path: str) -> tuple[Counter[str], Counter[str], int]:
     module_counter: Counter[str] = Counter()
     team_counter: Counter[str] = Counter()
     for issue in issues:
-        team_counter[_extract_reporter_team(issue, team_field_path)] += 1
+        raw_team = _extract_reporter_team(issue, team_field_path)
+        reporter = _extract_reporter_name(issue)
+        team_counter[_resolve_team_bucket(raw_team, reporter)] += 1
         fields = issue.get("fields") if isinstance(issue, dict) else None
         components = fields.get("components") if isinstance(fields, dict) else None
         names: list[str] = []
@@ -247,7 +292,7 @@ def _build_counters_from_local(project_key: str, *, start_date: str = "", end_da
         rows = conn.execute(
             """
             SELECT i.issue_key, i.reporter_team, c.component_name, c.component_order
-                   , i.created_at
+                   , i.created_at, i.raw_fields_json
             FROM jira_issue i
             LEFT JOIN jira_issue_component c ON c.issue_key = i.issue_key
             WHERE i.project_key = ? AND IFNULL(i.removed_at, '') = ''
@@ -263,26 +308,29 @@ def _build_counters_from_local(project_key: str, *, start_date: str = "", end_da
     issue_count = 0
     current_key = ""
     current_team = ""
+    current_reporter = ""
     current_created_at = ""
     current_components: list[str] = []
 
     def flush() -> None:
-        nonlocal issue_count, current_key, current_team, current_components, current_created_at
+        nonlocal issue_count, current_key, current_team, current_reporter, current_components, current_created_at
         if not current_key:
             return
         if not _is_created_in_range(current_created_at, start_date, end_date):
             current_key = ""
             current_team = ""
+            current_reporter = ""
             current_created_at = ""
             current_components = []
             return
         issue_count += 1
-        team_counter[current_team or "(Empty)"] += 1
+        team_counter[_resolve_team_bucket(current_team, current_reporter)] += 1
         modules = current_components or ["(None)"]
         for name in dict.fromkeys(modules):
             module_counter[name] += 1
         current_key = ""
         current_team = ""
+        current_reporter = ""
         current_created_at = ""
         current_components = []
 
@@ -293,6 +341,15 @@ def _build_counters_from_local(project_key: str, *, start_date: str = "", end_da
             current_key = issue_key
             current_team = str(row["reporter_team"] or "").strip()
             current_created_at = str(row["created_at"] or "").strip()
+            raw_fields = str(row["raw_fields_json"] or "").strip()
+            if raw_fields:
+                try:
+                    parsed = json.loads(raw_fields)
+                except Exception:
+                    parsed = {}
+                current_reporter = _extract_reporter_name({"fields": parsed if isinstance(parsed, dict) else {}})
+            else:
+                current_reporter = ""
         component_name = str(row["component_name"] or "").strip()
         if component_name:
             current_components.append(component_name)
@@ -421,7 +478,7 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
             primary_issues = search_issues_paged(
                 jira_req,
                 jql=jql,
-                fields=["components", team_field_path],
+                fields=["components", "reporter", team_field_path],
                 page_sizes=[5000, 1000, 200],
                 on_progress=progress_cb,
             )
@@ -446,7 +503,7 @@ def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:
                 compare_issues = search_issues_paged(
                     jira_req2,
                     jql=jql2,
-                    fields=["components", team_field_path],
+                    fields=["components", "reporter", team_field_path],
                     page_sizes=[5000, 1000, 200],
                     on_progress=progress_cb2,
                 )
