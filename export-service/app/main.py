@@ -289,7 +289,10 @@ def project_history(project_name: str) -> ProjectHistory:
 
 @app.post("/api/forecast/generate", response_model=ForecastResult)
 def forecast_generate(input_data: ForecastInput) -> ForecastResult:
-    return generate_forecast(input_data)
+    try:
+        return generate_forecast(input_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/forecast/versions", response_model=ForecastVersionRow)

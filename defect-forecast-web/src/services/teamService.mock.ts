@@ -1,7 +1,7 @@
 import { delay } from '@/services/delay'
 import type { TeamService } from '@/services/teamService'
 import type { TeamItem } from '@/types/team'
-import { initialTeams } from '@/data/mock/teams'
+import { fixedDevelopmentTeams, fixedTestingTeams, initialTeams } from '@/data/mock/teams'
 
 const KEY = 'defectForecast.teams.v1'
 
@@ -34,7 +34,11 @@ function saveLocal(teams: TeamItem[]) {
   }
 }
 
-let teamsCache: TeamItem[] = loadLocal()
+function normalizeTeams(_teams: TeamItem[]) {
+  return [...fixedTestingTeams, ...fixedDevelopmentTeams]
+}
+
+let teamsCache: TeamItem[] = normalizeTeams(loadLocal())
 
 export const teamServiceMock: TeamService = {
   async listTeams(): Promise<TeamItem[]> {
@@ -43,7 +47,7 @@ export const teamServiceMock: TeamService = {
   },
   async saveTeams(teams: TeamItem[]): Promise<TeamItem[]> {
     await delay(80)
-    teamsCache = teams.slice()
+    teamsCache = normalizeTeams(teams)
     saveLocal(teamsCache)
     return teamsCache.slice()
   },

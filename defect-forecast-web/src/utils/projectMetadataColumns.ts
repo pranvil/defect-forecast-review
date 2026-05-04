@@ -10,7 +10,8 @@ export type ProjectMetadataColumnId =
   | 'region'
   | 'os'
   | 'deviceType'
-  | 'chipsetStatus'
+  | 'chipsetVendor'
+  | 'chipsetNewness'
   | 'pipeline'
   | 'operators'
   | 'userPrograms'
@@ -36,7 +37,8 @@ export const PROJECT_METADATA_COLUMNS: ProjectMetadataColumn[] = [
   { id: 'region', label: '区域' },
   { id: 'os', label: 'OS' },
   { id: 'deviceType', label: '设备类型' },
-  { id: 'chipsetStatus', label: '芯片状态' },
+  { id: 'chipsetVendor', label: '芯片平台' },
+  { id: 'chipsetNewness', label: '芯片新旧' },
   { id: 'pipeline', label: '流水线' },
   { id: 'operators', label: '运营商' },
   { id: 'userPrograms', label: '用户测试' },
@@ -73,8 +75,10 @@ export function formatProjectMetadataCell(project: ProjectSummary, id: ProjectMe
       return project.os || '-'
     case 'deviceType':
       return project.deviceType || '-'
-    case 'chipsetStatus':
-      return project.chipsetStatus || '-'
+    case 'chipsetVendor':
+      return project.chipsetVendor || project.chipsetStatus?.split('_')[1] || '-'
+    case 'chipsetNewness':
+      return project.chipsetNewness || project.chipsetStatus?.split('_')[0] || '-'
     case 'pipeline':
       return project.pipeline || '-'
     case 'operators':

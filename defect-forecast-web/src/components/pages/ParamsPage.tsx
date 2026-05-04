@@ -45,7 +45,8 @@ import {
 import { formatProjectLabel } from '@/utils/projectLibrary'
 import { defectInputFromParams, findTopSimilarProjects } from '@/utils/defectCalculation'
 import {
-  CHIPSET_STATUS_OPTIONS,
+  CHIPSET_NEWNESS_OPTIONS,
+  CHIPSET_VENDOR_OPTIONS,
   DEVICE_TYPE_OPTIONS,
   IDH_VENDOR_OPTIONS,
   OPERATOR_OPTIONS,
@@ -131,7 +132,6 @@ export function ParamsPage() {
   const setActiveSection = useProjectStore((s) => s.setActiveSection)
   const teams = useTeamStore((s) => s.teams)
   const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
-  const toggleTeamEnabled = useTeamStore((s) => s.toggleTeamEnabled)
 
   const testingTeams = teams.filter((x) => x.type === 'testing')
   const devTeams = teams.filter((x) => x.type === 'development')
@@ -409,16 +409,44 @@ export function ParamsPage() {
               <CardContent>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>芯片状态</Label>
+                    <Label>芯片平台</Label>
                     <Select
-                      value={params.chipsetStatus}
-                      onValueChange={(v) => setParams({ chipsetStatus: v ?? params.chipsetStatus })}
+                      value={params.chipsetVendor}
+                      onValueChange={(v) =>
+                        setParams({
+                          chipsetVendor: v ?? params.chipsetVendor,
+                          chipsetStatus: `${params.chipsetNewness}_${v ?? params.chipsetVendor}`,
+                        })
+                      }
                     >
                       <SelectTrigger className="w-full rounded-2xl">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {CHIPSET_STATUS_OPTIONS.map((option) => (
+                        {CHIPSET_VENDOR_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>芯片新旧</Label>
+                    <Select
+                      value={params.chipsetNewness}
+                      onValueChange={(v) =>
+                        setParams({
+                          chipsetNewness: v ?? params.chipsetNewness,
+                          chipsetStatus: `${v ?? params.chipsetNewness}_${params.chipsetVendor}`,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHIPSET_NEWNESS_OPTIONS.map((option) => (
                           <SelectItem key={option} value={option}>
                             {option}
                           </SelectItem>
@@ -780,22 +808,15 @@ export function ParamsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>团队</TableHead>
-                  <TableHead>默认来源</TableHead>
-                  <TableHead>启用</TableHead>
+                  <TableHead>分类</TableHead>
+                  <TableHead>覆盖范围</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {testingTeams.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">{t.name}</TableCell>
-                    <TableCell>按历史项目自动识别</TableCell>
-                    <TableCell>
-                      <Checkbox
-                        checked={t.enabled}
-                        onCheckedChange={() => toggleTeamEnabled(t.id)}
-                      />
-                    </TableCell>
+                    <TableCell className="text-slate-500">{t.note || '固定分类'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -813,7 +834,6 @@ export function ParamsPage() {
                 <TableRow>
                   <TableHead>团队</TableHead>
                   <TableHead>默认来源</TableHead>
-                  <TableHead>启用</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -821,12 +841,6 @@ export function ParamsPage() {
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">{t.name}</TableCell>
                     <TableCell>按历史项目自动识别</TableCell>
-                    <TableCell>
-                      <Checkbox
-                        checked={t.enabled}
-                        onCheckedChange={() => toggleTeamEnabled(t.id)}
-                      />
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { toast } from 'sonner'
+import { fixedDevelopmentTeams, fixedTestingTeams } from '@/data/mock/teams'
 import { services } from '@/services'
 import type { ForecastDataset } from '@/services/forecastService'
 import type {
@@ -27,10 +28,13 @@ import {
   firstDayDateOfWeek,
   isWeekVisibleInRange,
 } from '@/utils/week'
+import type { TeamItem } from '@/types/team'
 
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
 const DEFAULT_JIRA_BASE_URL = 'https://jira.tcl.com'
+const TESTING_OTHER_TEAM = '其他测试团队'
+const DEVELOPMENT_OTHER_TEAM = '其他开发团队'
 const JIRA_PROJECT_FETCH_FILTER_CLAUSE =
   'issuetype in (defect, defect_new) AND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED") AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR" AND summary !~ "CloneMP") AND (resolution is EMPTY OR resolution not in ("Needn\'t Fixed", "Duplicate", "Duplicated"))'
 
@@ -59,6 +63,75 @@ function addOneYearIso(isoDate: string): string {
   const mm = `${dt.getMonth() + 1}`.padStart(2, '0')
   const dd = `${dt.getDate()}`.padStart(2, '0')
   return `${yy}-${mm}-${dd}`
+}
+
+function normalizeTeamName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function splitTeamAliases(note: string): string[] {
+  return note
+    .split(/[，,;；\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function buildTeamAliasMap(teams: TeamItem[]) {
+  return teams.map((team) => {
+    const aliases = [team.name, ...splitTeamAliases(team.note)]
+    const normalizedAliases = new Set(aliases.map(normalizeTeamName).filter(Boolean))
+    return { team: team.name, aliases, normalizedAliases }
+  })
+}
+
+const TESTING_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedTestingTeams)
+const DEVELOPMENT_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedDevelopmentTeams)
+const TESTING_KNOWN_ALIASES = TESTING_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
+const DEVELOPMENT_KNOWN_ALIASES = DEVELOPMENT_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
+
+function resolveTeamCategory(team: string, kind: 'testing' | 'development'): string {
+  const normalized = normalizeTeamName(team)
+  const aliasMap = kind === 'testing' ? TESTING_TEAM_ALIAS_MAP : DEVELOPMENT_TEAM_ALIAS_MAP
+  const fallback = kind === 'testing' ? TESTING_OTHER_TEAM : DEVELOPMENT_OTHER_TEAM
+  if (!normalized) return fallback
+  const matched = aliasMap.find((row) =>
+    [...row.normalizedAliases].some((alias) => normalized === alias || normalized.endsWith(alias) || alias.endsWith(normalized)),
+  )
+  return matched?.team ?? fallback
+}
+
+function aggregateTeamWeeklyRows(
+  rows: Array<{ team: string; values: number[]; issueKeysByWeek?: string[][] }>,
+  visibleWeekIndexes: number[],
+  group: string,
+  kind: 'testing' | 'development',
+) {
+  const buckets = new Map<string, { team: string; group: string; values: number[]; issueKeysByWeek: string[][]; total: number }>()
+  rows.forEach((source) => {
+    const team = resolveTeamCategory(source.team, kind)
+    const bucket =
+      buckets.get(team) ??
+      {
+        team,
+        group,
+        values: visibleWeekIndexes.map(() => 0),
+        issueKeysByWeek: visibleWeekIndexes.map(() => []),
+        total: 0,
+      }
+    visibleWeekIndexes.forEach((index, idx) => {
+      const value = source.values[index] ?? 0
+      bucket.values[idx] = (bucket.values[idx] ?? 0) + value
+      bucket.total += value
+      bucket.issueKeysByWeek[idx] = [
+        ...(bucket.issueKeysByWeek[idx] ?? []),
+        ...(source.issueKeysByWeek?.[index] ?? []),
+      ]
+    })
+    buckets.set(team, bucket)
+  })
+  return [...buckets.values()]
+    .filter((row) => row.total > 0)
+    .sort((a, b) => b.total - a.total || a.team.localeCompare(b.team))
 }
 
 export function useHistoryPageData() {

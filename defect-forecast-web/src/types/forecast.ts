@@ -31,6 +31,8 @@ export interface ForecastProjectParams {
   os: string
   deviceType: string
   chipsetStatus: string
+  chipsetVendor: string
+  chipsetNewness: string
   pipeline: string
   operators: string[]
   userPrograms: string[]

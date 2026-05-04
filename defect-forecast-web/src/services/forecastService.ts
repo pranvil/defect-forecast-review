@@ -37,12 +37,22 @@ export interface ForecastReferenceProjectRow {
   similarity: number
 }
 
+export interface ForecastFactors {
+  chipset: number
+  operators: number
+  userPrograms: number
+  supportSim: number
+  mm: number
+  pipeline: number
+}
+
 export interface ForecastResult {
   dataset: ForecastDataset
   teamSummary: ForecastTeamSummaryRow[]
   estimatedDefects?: number
   baseValue?: number
   referenceProjects?: ForecastReferenceProjectRow[]
+  factors?: ForecastFactors
 }
 
 export interface ForecastVersionRow {

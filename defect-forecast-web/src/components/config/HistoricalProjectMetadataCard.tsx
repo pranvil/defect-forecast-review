@@ -50,7 +50,8 @@ import {
   formatProjectMetadataCell,
 } from '@/utils/projectMetadataColumns'
 import {
-  CHIPSET_STATUS_OPTIONS,
+  CHIPSET_NEWNESS_OPTIONS,
+  CHIPSET_VENDOR_OPTIONS,
   DEVICE_TYPE_OPTIONS,
   IDH_VENDOR_OPTIONS,
   OPERATOR_OPTIONS,
@@ -76,6 +77,8 @@ const emptyDraft = (): ProjectSummary => ({
   os: '',
   deviceType: '',
   chipsetStatus: '',
+  chipsetVendor: '',
+  chipsetNewness: '',
   pipeline: '',
   operators: [],
   userPrograms: [],
@@ -88,6 +91,9 @@ const emptyDraft = (): ProjectSummary => ({
 })
 
 function normalizeRow(row: ProjectSummary): ProjectSummary {
+  const [legacyNewness = '', legacyVendor = ''] = (row.chipsetStatus ?? '').split('_')
+  const chipsetVendor = row.chipsetVendor?.trim() || legacyVendor || undefined
+  const chipsetNewness = row.chipsetNewness?.trim() || legacyNewness || undefined
   return {
     ...row,
     name: row.name.trim().toUpperCase(),
@@ -95,6 +101,9 @@ function normalizeRow(row: ProjectSummary): ProjectSummary {
     cycle: row.cycle.trim() || '-',
     defects: Number.isFinite(row.defects) ? Math.max(0, Math.round(row.defects)) : 0,
     teams: Number.isFinite(row.teams) ? Math.max(1, Math.round(row.teams)) : 1,
+    chipsetVendor,
+    chipsetNewness,
+    chipsetStatus: chipsetVendor && chipsetNewness ? `${chipsetNewness}_${chipsetVendor}` : row.chipsetStatus,
     operators: row.operators?.filter(Boolean) ?? [],
     userPrograms: row.userPrograms?.filter(Boolean) ?? [],
     frQuantity:
@@ -163,6 +172,8 @@ function rowsFromImport(text: string): ProjectSummary[] {
         os: getValue(raw, ['os', 'OS', '操作系统']) || undefined,
         deviceType: getValue(raw, ['deviceType', 'Device_Type', '设备类型']) || undefined,
         chipsetStatus: getValue(raw, ['chipsetStatus', 'Chipset Status', '芯片状态']) || undefined,
+        chipsetVendor: getValue(raw, ['chipsetVendor', 'Chipset Vendor', '芯片平台']) || undefined,
+        chipsetNewness: getValue(raw, ['chipsetNewness', 'Chipset Newness', '芯片新旧']) || undefined,
         pipeline: getValue(raw, ['pipeline', '流水线']) || undefined,
         operators: splitList(getValue(raw, ['operators', 'Operators', '运营商'])),
         userPrograms: splitList(getValue(raw, ['userPrograms', 'User Programs', '用户测试'])),
@@ -189,7 +200,8 @@ function exportCsv(rows: ProjectSummary[]): string {
     'region',
     'os',
     'deviceType',
-    'chipsetStatus',
+    'chipsetVendor',
+    'chipsetNewness',
     'pipeline',
     'operators',
     'userPrograms',
@@ -585,7 +597,30 @@ export function HistoricalProjectMetadataCard() {
             <SelectField label="目标区域" value={draft.region ?? ''} options={REGION_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, region: v }))} />
             <SelectField label="操作系统" value={draft.os ?? ''} options={OS_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, os: v }))} />
             <SelectField label="设备类型" value={draft.deviceType ?? ''} options={DEVICE_TYPE_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, deviceType: v }))} />
-            <SelectField label="芯片状态" value={draft.chipsetStatus ?? ''} options={CHIPSET_STATUS_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, chipsetStatus: v }))} />
+            <SelectField
+              label="芯片平台"
+              value={draft.chipsetVendor ?? draft.chipsetStatus?.split('_')[1] ?? ''}
+              options={CHIPSET_VENDOR_OPTIONS}
+              onChange={(v) =>
+                setDraft((s) => ({
+                  ...s,
+                  chipsetVendor: v,
+                  chipsetStatus: `${s.chipsetNewness || s.chipsetStatus?.split('_')[0] || ''}_${v}`,
+                }))
+              }
+            />
+            <SelectField
+              label="芯片新旧"
+              value={draft.chipsetNewness ?? draft.chipsetStatus?.split('_')[0] ?? ''}
+              options={CHIPSET_NEWNESS_OPTIONS}
+              onChange={(v) =>
+                setDraft((s) => ({
+                  ...s,
+                  chipsetNewness: v,
+                  chipsetStatus: `${v}_${s.chipsetVendor || s.chipsetStatus?.split('_')[1] || ''}`,
+                }))
+              }
+            />
             <SelectField label="流水线" value={draft.pipeline ?? ''} options={PIPELINE_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, pipeline: v }))} />
             <SelectField label="外包商" value={draft.idhVendor ?? ''} options={IDH_VENDOR_OPTIONS} onChange={(v) => setDraft((s) => ({ ...s, idhVendor: v }))} />
             <div className="space-y-2">

@@ -56,6 +56,42 @@ def _normalize_project_key(project_key: str) -> str:
     return project_key.strip().upper()
 
 
+def _split_legacy_chipset_status(value: object) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if "_" not in raw:
+        return "", ""
+    newness, vendor = raw.split("_", 1)
+    return vendor.strip(), newness.strip()
+
+
+def _project_summary_from_row(row) -> ProjectSummary:
+    legacy_vendor, legacy_newness = _split_legacy_chipset_status(row["chipset_status"] if "chipset_status" in row.keys() else "")
+    return ProjectSummary(
+        name=str(row["name"]),
+        displayName=str(row["display_name"] or "").strip() or None,
+        cycle=str(row["cycle"] or ""),
+        defects=int(row["defects"] or 0),
+        teams=int(row["teams"] or 0),
+        similarity=float(row["similarity"]) if row["similarity"] is not None else None,
+        projectCategory=str(row["project_category"] or "").strip() or None,
+        region=str(row["region"] or "").strip() or None,
+        os=str(row["os"] or "").strip() or None,
+        deviceType=str(row["device_type"] or "").strip() or None,
+        chipsetStatus=str(row["chipset_status"] or "").strip() or None,
+        chipsetVendor=str(row["chipset_vendor"] or "").strip() or legacy_vendor or None,
+        chipsetNewness=str(row["chipset_newness"] or "").strip() or legacy_newness or None,
+        pipeline=str(row["pipeline"] or "").strip() or None,
+        operators=json.loads(row["operators_json"] or "[]"),
+        userPrograms=json.loads(row["user_programs_json"] or "[]"),
+        idhVendor=str(row["idh_vendor"] or "").strip() or None,
+        frQuantity=float(row["fr_quantity"]) if row["fr_quantity"] is not None else None,
+        mm=float(row["mm"]) if row["mm"] is not None else None,
+        supportSim=row["support_sim"] if row["support_sim"] in ("Yes", "No") else None,
+        validStartDate=str(row["valid_start_date"] or "").strip() or None,
+        validEndDate=str(row["valid_end_date"] or "").strip() or None,
+    )
+
+
 def _parse_jira_datetime(raw: str) -> datetime | None:
     value = raw.strip()
     if not value:
@@ -993,22 +1029,34 @@ def list_project_summaries() -> list[ProjectSummary]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT name, display_name, cycle, defects, teams, similarity
+            SELECT
+              name,
+              display_name,
+              cycle,
+              defects,
+              teams,
+              similarity,
+              project_category,
+              region,
+              os,
+              device_type,
+              chipset_status,
+              chipset_vendor,
+              chipset_newness,
+              pipeline,
+              operators_json,
+              user_programs_json,
+              idh_vendor,
+              fr_quantity,
+              mm,
+              support_sim,
+              valid_start_date,
+              valid_end_date
             FROM project_summary
             ORDER BY datetime(updated_at) DESC, name ASC
             """
         ).fetchall()
-    return [
-        ProjectSummary(
-            name=str(row["name"]),
-            displayName=str(row["display_name"] or "").strip() or None,
-            cycle=str(row["cycle"] or ""),
-            defects=int(row["defects"] or 0),
-            teams=int(row["teams"] or 0),
-            similarity=float(row["similarity"]) if row["similarity"] is not None else None,
-        )
-        for row in rows
-    ]
+    return [_project_summary_from_row(row) for row in rows]
 
 
 def upsert_cached_projects(projects: list[ProjectSummary]) -> list[ProjectSummary]:
@@ -1018,10 +1066,41 @@ def upsert_cached_projects(projects: list[ProjectSummary]) -> list[ProjectSummar
             key = _normalize_project_key(project.name)
             existing = conn.execute("SELECT source, updated_at FROM project_summary WHERE name = ?", (key,)).fetchone()
             source = str(existing["source"] or "history") if existing else "history"
+            legacy_vendor, legacy_newness = _split_legacy_chipset_status(project.chipsetStatus)
+            chipset_vendor = (project.chipsetVendor or legacy_vendor or "").strip()
+            chipset_newness = (project.chipsetNewness or legacy_newness or "").strip()
+            chipset_status = (project.chipsetStatus or "").strip()
+            if not chipset_status and chipset_vendor and chipset_newness:
+                chipset_status = f"{chipset_newness}_{chipset_vendor}"
             conn.execute(
                 """
-                INSERT INTO project_summary(name, display_name, cycle, defects, teams, similarity, source, updated_at)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO project_summary(
+                  name,
+                  display_name,
+                  cycle,
+                  defects,
+                  teams,
+                  similarity,
+                  project_category,
+                  region,
+                  os,
+                  device_type,
+                  chipset_status,
+                  chipset_vendor,
+                  chipset_newness,
+                  pipeline,
+                  operators_json,
+                  user_programs_json,
+                  idh_vendor,
+                  fr_quantity,
+                  mm,
+                  support_sim,
+                  valid_start_date,
+                  valid_end_date,
+                  source,
+                  updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                   display_name = CASE
                     WHEN excluded.display_name <> '' THEN excluded.display_name
@@ -1031,6 +1110,22 @@ def upsert_cached_projects(projects: list[ProjectSummary]) -> list[ProjectSummar
                   defects = excluded.defects,
                   teams = excluded.teams,
                   similarity = excluded.similarity,
+                  project_category = excluded.project_category,
+                  region = excluded.region,
+                  os = excluded.os,
+                  device_type = excluded.device_type,
+                  chipset_status = excluded.chipset_status,
+                  chipset_vendor = excluded.chipset_vendor,
+                  chipset_newness = excluded.chipset_newness,
+                  pipeline = excluded.pipeline,
+                  operators_json = excluded.operators_json,
+                  user_programs_json = excluded.user_programs_json,
+                  idh_vendor = excluded.idh_vendor,
+                  fr_quantity = excluded.fr_quantity,
+                  mm = excluded.mm,
+                  support_sim = excluded.support_sim,
+                  valid_start_date = excluded.valid_start_date,
+                  valid_end_date = excluded.valid_end_date,
                   source = excluded.source,
                   updated_at = excluded.updated_at
                 """,
@@ -1041,6 +1136,22 @@ def upsert_cached_projects(projects: list[ProjectSummary]) -> list[ProjectSummar
                     project.defects,
                     project.teams,
                     project.similarity,
+                    (project.projectCategory or "").strip() or None,
+                    (project.region or "").strip() or None,
+                    (project.os or "").strip() or None,
+                    (project.deviceType or "").strip() or None,
+                    chipset_status or None,
+                    chipset_vendor or None,
+                    chipset_newness or None,
+                    (project.pipeline or "").strip() or None,
+                    json.dumps(project.operators, ensure_ascii=False),
+                    json.dumps(project.userPrograms, ensure_ascii=False),
+                    (project.idhVendor or "").strip() or None,
+                    project.frQuantity,
+                    project.mm,
+                    project.supportSim,
+                    (project.validStartDate or "").strip() or None,
+                    (project.validEndDate or "").strip() or None,
                     source,
                     now,
                 ),
@@ -1070,19 +1181,38 @@ def _load_summary(project_name: str) -> ProjectSummary | None:
     key = _normalize_project_key(project_name)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT name, display_name, cycle, defects, teams, similarity FROM project_summary WHERE name = ?",
+            """
+            SELECT
+              name,
+              display_name,
+              cycle,
+              defects,
+              teams,
+              similarity,
+              project_category,
+              region,
+              os,
+              device_type,
+              chipset_status,
+              chipset_vendor,
+              chipset_newness,
+              pipeline,
+              operators_json,
+              user_programs_json,
+              idh_vendor,
+              fr_quantity,
+              mm,
+              support_sim,
+              valid_start_date,
+              valid_end_date
+            FROM project_summary
+            WHERE name = ?
+            """,
             (key,),
         ).fetchone()
     if not row:
         return None
-    return ProjectSummary(
-        name=str(row["name"]),
-        displayName=str(row["display_name"] or "").strip() or None,
-        cycle=str(row["cycle"] or ""),
-        defects=int(row["defects"] or 0),
-        teams=int(row["teams"] or 0),
-        similarity=float(row["similarity"]) if row["similarity"] is not None else None,
-    )
+    return _project_summary_from_row(row)
 
 
 def _load_weekly_source(project_name: str, source: str) -> list[WeeklyPoint]:

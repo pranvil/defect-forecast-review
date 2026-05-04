@@ -52,6 +52,8 @@ class ProjectSummary(BaseModel):
     os: Optional[str] = None
     deviceType: Optional[str] = None
     chipsetStatus: Optional[str] = None
+    chipsetVendor: Optional[str] = None
+    chipsetNewness: Optional[str] = None
     pipeline: Optional[str] = None
     operators: List[str] = Field(default_factory=list)
     userPrograms: List[str] = Field(default_factory=list)
@@ -75,6 +77,8 @@ class ProjectHistory(BaseModel):
     os: Optional[str] = None
     deviceType: Optional[str] = None
     chipsetStatus: Optional[str] = None
+    chipsetVendor: Optional[str] = None
+    chipsetNewness: Optional[str] = None
     pipeline: Optional[str] = None
     operators: List[str] = Field(default_factory=list)
     userPrograms: List[str] = Field(default_factory=list)
@@ -138,6 +142,20 @@ class ForecastParams(BaseModel):
     newProjectName: str
     startWeek: str
     endWeek: str
+    projectCategory: str = ""
+    region: str = ""
+    os: str = ""
+    deviceType: str = ""
+    chipsetStatus: str = ""
+    chipsetVendor: str = ""
+    chipsetNewness: str = ""
+    pipeline: str = ""
+    operators: List[str] = Field(default_factory=list)
+    userPrograms: List[str] = Field(default_factory=list)
+    idhVendor: str = ""
+    frQuantity: float = 0
+    mm: float = 0
+    supportSim: Literal["Yes", "No"] = "Yes"
 
 
 class RefProjectRow(BaseModel):
@@ -169,9 +187,30 @@ class ForecastTeamSummaryRow(BaseModel):
     fixed: int
 
 
+class ForecastReferenceProjectRow(BaseModel):
+    name: str
+    displayName: Optional[str] = None
+    defects: int
+    mm: Optional[float] = None
+    similarity: float
+
+
+class ForecastFactors(BaseModel):
+    chipset: float
+    operators: float
+    userPrograms: float
+    supportSim: float
+    mm: float
+    pipeline: float
+
+
 class ForecastResult(BaseModel):
     dataset: ForecastDataset
     teamSummary: List[ForecastTeamSummaryRow]
+    estimatedDefects: Optional[int] = None
+    baseValue: Optional[int] = None
+    referenceProjects: List[ForecastReferenceProjectRow] = Field(default_factory=list)
+    factors: Optional[ForecastFactors] = None
 
 
 class SaveForecastVersionRequest(BaseModel):
@@ -245,16 +284,10 @@ class FieldMappingRow(BaseModel):
     enabled: bool
 
 
-class ForecastDefaultsParams(BaseModel):
-    newProjectName: str
-    startWeek: str
-    endWeek: str
-
-
 class ForecastDefaults(BaseModel):
     refProjects: List[RefProjectRow] = Field(default_factory=list)
     milestones: List[MilestoneParam] = Field(default_factory=list)
-    params: ForecastDefaultsParams
+    params: ForecastParams
 
 
 class CompareColorsConfig(BaseModel):

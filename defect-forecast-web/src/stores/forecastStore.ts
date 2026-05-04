@@ -14,7 +14,9 @@ export const defaultForecastParams: ForecastProjectParams = {
   os: 'Android',
   deviceType: 'Smart phone',
   chipsetStatus: 'Old_MTK',
-  pipeline: '无',
+  chipsetVendor: 'MTK',
+  chipsetNewness: 'Old',
+  pipeline: '不部署',
   operators: [],
   userPrograms: [],
   idhVendor: '',
@@ -24,9 +26,13 @@ export const defaultForecastParams: ForecastProjectParams = {
 }
 
 function normalizeForecastParams(params: Partial<ForecastProjectParams>): ForecastProjectParams {
+  const legacyStatus = params.chipsetStatus ?? defaultForecastParams.chipsetStatus
+  const [legacyNewness = '', legacyVendor = ''] = legacyStatus.split('_')
   return {
     ...defaultForecastParams,
     ...params,
+    chipsetVendor: params.chipsetVendor || legacyVendor || defaultForecastParams.chipsetVendor,
+    chipsetNewness: params.chipsetNewness || legacyNewness || defaultForecastParams.chipsetNewness,
     operators: Array.isArray(params.operators) ? params.operators : [],
     userPrograms: Array.isArray(params.userPrograms) ? params.userPrograms : [],
     supportSim: params.supportSim === 'No' ? 'No' : 'Yes',

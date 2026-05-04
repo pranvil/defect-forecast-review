@@ -46,16 +46,17 @@ export function ForecastPage() {
   const teams = useTeamStore((s) => s.teams)
 
   const enabledTestingTeams = React.useMemo(() => {
-    return teams.filter((t) => t.enabled && t.type === 'testing').map((t) => t.name)
+    return teams.filter((t) => t.type === 'testing').map((t) => t.name)
   }, [teams])
 
   const enabledDevTeams = React.useMemo(() => {
     return teams
-      .filter((t) => t.enabled && t.type === 'development')
+      .filter((t) => t.type === 'development')
       .map((t) => t.name)
   }, [teams])
 
   const [result, setResult] = React.useState<ForecastResult | null>(null)
+  const [error, setError] = React.useState('')
   const [versions, setVersions] = React.useState<{ id: string; createdAt: string; note: string; cycle: string }[]>([])
 
   const refreshVersions = React.useCallback(() => {
@@ -66,6 +67,7 @@ export function ForecastPage() {
 
   React.useEffect(() => {
     let cancelled = false
+    setError('')
     void services.forecastService
       .getForecastResult({
         params,
@@ -76,7 +78,13 @@ export function ForecastPage() {
       })
       .then((r) => {
         if (cancelled) return
+        setError('')
         setResult(r)
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setResult(null)
+        setError(e instanceof Error ? e.message : '预测服务调用失败')
       })
     return () => {
       cancelled = true
@@ -86,6 +94,17 @@ export function ForecastPage() {
   React.useEffect(() => {
     void refreshVersions()
   }, [refreshVersions])
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-semibold">预测结果</h2>
+          <p className="mt-1 text-sm text-rose-600">{error}</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!result) {
     return (

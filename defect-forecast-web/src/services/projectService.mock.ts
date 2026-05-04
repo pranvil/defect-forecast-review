@@ -33,6 +33,10 @@ function loadCache(): ProjectSummary[] | null {
         os: typeof x.os === 'string' ? x.os : undefined,
         deviceType: typeof x.deviceType === 'string' ? x.deviceType : undefined,
         chipsetStatus: typeof x.chipsetStatus === 'string' ? x.chipsetStatus : undefined,
+        chipsetVendor:
+          typeof x.chipsetVendor === 'string' ? x.chipsetVendor : typeof x.chipsetStatus === 'string' ? x.chipsetStatus.split('_')[1] : undefined,
+        chipsetNewness:
+          typeof x.chipsetNewness === 'string' ? x.chipsetNewness : typeof x.chipsetStatus === 'string' ? x.chipsetStatus.split('_')[0] : undefined,
         pipeline: typeof x.pipeline === 'string' ? x.pipeline : undefined,
         operators: Array.isArray(x.operators) ? x.operators.filter((v): v is string => typeof v === 'string') : undefined,
         userPrograms: Array.isArray(x.userPrograms) ? x.userPrograms.filter((v): v is string => typeof v === 'string') : undefined,
@@ -88,6 +92,8 @@ let cachedProjects: ProjectSummary[] =
     os: projectLibrary[name]!.os,
     deviceType: projectLibrary[name]!.deviceType,
     chipsetStatus: projectLibrary[name]!.chipsetStatus,
+    chipsetVendor: projectLibrary[name]!.chipsetStatus?.split('_')[1],
+    chipsetNewness: projectLibrary[name]!.chipsetStatus?.split('_')[0],
     pipeline: projectLibrary[name]!.pipeline,
     operators: projectLibrary[name]!.operators,
     userPrograms: projectLibrary[name]!.userPrograms,

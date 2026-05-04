@@ -16,8 +16,8 @@ from app.models import (
     CompareSeriesPoint,
     FieldMappingRow,
     ForecastDefaults,
-    ForecastDefaultsParams,
     ForecastInput,
+    ForecastParams,
     ForecastResult,
     ForecastVersionRow,
     JiraFetchRequest,
@@ -41,17 +41,57 @@ DEFAULT_PROJECTS = [
     ("Atlas VZW", "26W6-26W30", 1038, 8, 68.0),
 ]
 
+SIMILARITY_WEIGHTS = (
+    ("projectCategory", 0.25),
+    ("region", 0.20),
+    ("os", 0.15),
+    ("chipsetVendor", 0.10),
+    ("operatorOverlap", 0.20),
+    ("frQuantityBand", 0.10),
+)
+
+IDH_SIMILARITY_WEIGHTS = (
+    ("projectCategory", 0.20),
+    ("idhVendor", 0.25),
+    ("region", 0.15),
+    ("os", 0.10),
+    ("chipsetVendor", 0.10),
+    ("operatorOverlap", 0.15),
+    ("frQuantityBand", 0.05),
+)
+
+IDH_PROJECT_CATEGORIES = {"idh联合项目", "idh全o"}
+FR_QUANTITY_BANDS = (500, 1000, *range(1500, 20001, 500))
+PIPELINE_FACTORS = {
+    "全部": 1.08,
+    "冒烟": 1.01,
+    "无冒烟": 0.99,
+    "不部署": 0.92,
+    "无": 0.92,
+}
+
 DEFAULT_TEAMS: list[TeamConfigRow] = [
-    TeamConfigRow(id="t1", name="系统质量二部-运营商系统测试组", type="testing", enabled=True, note="主要承担系统测试"),
-    TeamConfigRow(id="t2", name="系统质量二部-北美需求交付组", type="testing", enabled=True, note="需求交付与验证"),
-    TeamConfigRow(id="t3", name="北美测试部", type="testing", enabled=True, note="实网及专项验证"),
-    TeamConfigRow(id="t4", name="专项与协议测试部-运营商专项测试二组", type="testing", enabled=True, note="专项测试"),
-    TeamConfigRow(id="t5", name="专项与协议测试部-运营商协议测试一组", type="testing", enabled=True, note="协议测试"),
-    TeamConfigRow(id="t6", name="协议技术部", type="development", enabled=True, note="开发修复"),
-    TeamConfigRow(id="t7", name="系统技术部", type="development", enabled=True, note="平台与系统修复"),
-    TeamConfigRow(id="t8", name="运营商应用开发部", type="development", enabled=True, note="运营商功能修复"),
-    TeamConfigRow(id="t9", name="基础应用开发部", type="development", enabled=True, note="应用侧修复"),
+    TeamConfigRow(id="testing-google-xts", name="Google XTS", type="testing", enabled=True, note="软件质量保障二中心-系统质量三部-Google测试组"),
+    TeamConfigRow(id="testing-system", name="系统测试组", type="testing", enabled=True, note="软件质量保障二中心-系统质量三部-系统测试一组，软件质量保障二中心-系统质量二部-运营商系统测试二组，软件质量保障二中心-系统质量二部-运营商系统测试三组，软件质量保障二中心-系统质量三部-系统测试二组，软件质量保障二中心-系统质量二部-运营商系统测试组，软件质量保障二中心-系统质量三部-应用测试组"),
+    TeamConfigRow(id="testing-na-delivery", name="北美需求交付组", type="testing", enabled=True, note="软件质量保障二中心-系统质量二部-北美需求交付组"),
+    TeamConfigRow(id="testing-na", name="北美测试部", type="testing", enabled=True, note="软件质量保障二中心-北美测试部"),
+    TeamConfigRow(id="testing-special", name="专项测试组", type="testing", enabled=True, note="软件质量保障二中心-专项与协议测试部-专项自动化组，软件质量保障二中心-专项与协议测试部-运营商专项测试二组，软件质量保障二中心-专项与协议测试部-运营商专项测试一组"),
+    TeamConfigRow(id="testing-protocol", name="协议测试组", type="testing", enabled=True, note="软件质量保障二中心-专项与协议测试部-运营商协议测试一组，软件质量保障二中心-专项与协议测试部-运营商协议测试二组"),
+    TeamConfigRow(id="testing-pipeline", name="流水线", type="testing", enabled=True, note="软件质量保障二中心-系统质量二部-质效自动化组，测试未知团队-swtc_devops"),
+    TeamConfigRow(id="testing-hera-user-apruut", name="Hera/Usersupport/APRUUT", type="testing", enabled=True, note="MP PL-PQ-QPM Team，MP PL-Q&CC-PQ&NPS，MP BU-Q&CC-PQ&NPS，测试未知团队-usersupport，测试未知团队-devops.tms"),
+    TeamConfigRow(id="development-protocol", name="协议技术部", type="development", enabled=True, note="移动解决方案中心-协议技术部-协议开发一组，移动解决方案中心-协议技术部-协议开发二组，系统应用开发中心-协议技术部-协议开发一组，移动解决方案二中心-协议技术部-协议开发一组，移动解决方案二中心-协议技术部-协议开发四组，移动解决方案二中心-协议技术部-协议开发二组"),
+    TeamConfigRow(id="development-bsp", name="底软技术部", type="development", enabled=True, note="移动解决方案中心-底软技术部-系统开发二组，移动解决方案中心-底软技术部-设备安全组，移动解决方案中心-底软技术部-充电方案组，移动解决方案中心-底软技术部-工业生产组，移动解决方案中心-底软技术部-系统开发一组，移动解决方案中心-底软技术部-系统开发三组，移动解决方案中心-底软技术部-机芯平台组，移动解决方案中心-底软技术部，移动解决方案中心-底软技术部-功耗充电组，移动解决方案一中心-底软技术部-机芯预研组，移动解决方案一中心-底软技术部-设备安全组，移动解决方案一中心-底软技术部-系统开发一组，移动解决方案一中心-底软技术部-功耗充电组，移动解决方案一中心-底软技术部-系统开发二组，移动解决方案一中心-底软技术部-DFX组，移动解决方案一中心-底软技术部-ODC一组"),
+    TeamConfigRow(id="development-system", name="系统技术部", type="development", enabled=True, note="移动解决方案中心-系统技术部-交互窗口组，移动解决方案中心-系统技术部-多媒体连接组，移动解决方案中心-系统技术部-框架开发一组，移动解决方案中心-系统技术部-框架开发二组，移动解决方案中心-系统技术部-显示技术组，移动解决方案中心-系统技术部-核心服务组，移动解决方案中心-系统技术部-续航优化组，移动解决方案中心-系统技术部-系统稳定性组，移动解决方案中心-系统技术部，移动解决方案一中心-系统技术部-多媒体连接组，移动解决方案一中心-系统技术部-性能解决方案组，移动解决方案一中心-系统技术部-核心服务组，移动解决方案一中心-系统技术部-框架开发一组，移动解决方案一中心-系统技术部-交互窗口组，移动解决方案一中心-系统技术部-竞争力技术组，移动解决方案一中心-系统技术部-框架开发二组，移动解决方案一中心-系统技术部-系统稳定性组"),
+    TeamConfigRow(id="development-carrier-app", name="运营商应用开发部", type="development", enabled=True, note="系统应用开发中心-运营商应用开发部-通话应用组，系统应用开发中心-运营商应用开发部-通话服务组，系统应用开发中心-运营商应用开发部-运营商服务组，系统应用开发中心-运营商应用开发部-信息应用组，系统应用开发中心-运营商应用开发部，移动解决方案二中心-运营商应用开发部-通信应用组，移动解决方案二中心-运营商应用开发部-武汉ODC组，移动解决方案二中心-运营商应用开发部-通话服务组，系统应用开发中心-运营商应用开发部-通信应用组，移动解决方案二中心-运营商应用开发部-工具应用组，移动解决方案二中心-运营商应用开发部-系统更新服务组"),
+    TeamConfigRow(id="development-basic-app", name="基础应用开发部", type="development", enabled=True, note="系统应用开发中心-基础应用开发部-系统基础应用组，系统应用开发中心-基础应用开发部-门户基础应用组，系统应用开发中心-基础应用开发部-多媒体基础应用组，系统应用开发中心-基础应用开发部-应用技术组，系统应用开发中心-基础应用开发部，移动解决方案二中心-基础应用开发部-系统基础应用组，移动解决方案二中心-基础应用开发部-应用技术组，移动解决方案二中心-基础应用开发部-多媒体基础应用组，移动解决方案二中心-基础应用开发部-三方与平台应用组"),
+    TeamConfigRow(id="development-independent-app", name="独立应用开发部", type="development", enabled=True, note="系统应用开发中心-独立应用开发部-网络服务组，系统应用开发中心-独立应用开发部-工具服务组，系统应用开发中心-独立应用开发部-桌面应用组，系统应用开发中心-独立应用开发部-武汉ODC组，系统应用开发中心-独立应用开发部-穿戴服务组，系统应用开发中心-独立应用开发部-内容平台组，互联网应用开发中心-独立应用开发部-桌面应用组，互联网应用开发中心-独立应用开发部-AI应用组，互联网应用开发中心-独立应用开发部-运营业务组，互联网应用开发中心-独立应用开发部-创新应用组"),
+    TeamConfigRow(id="development-engineering-efficiency", name="工程效能部", type="development", enabled=True, note="系统技术中心-工程效能部-WSL工具开发组，系统技术中心-工程效能部-通讯项目交付组，系统技术中心-工程效能部-FCM平台开发组，系统技术中心-工程效能部-通讯交付组"),
+    TeamConfigRow(id="development-terminal-os", name="终端OS部", type="development", enabled=True, note="系统技术中心-终端OS部-性能解决方案组"),
+    TeamConfigRow(id="development-camera", name="Camera", type="development", enabled=True, note="MP PL-Tech.&Inno.-Camera LAB-APP Team，MP PL-R&D-Camera LAB-APP Team，MP PL-Tech.&Inno.-Camera LAB-HAL Team，MP PL-R&D-Camera LAB-HAL Team，MP PL-Tech.&Inno.-Camera LAB，MP PL-R&D-Camera LAB，MP PL-Tech.&Inno.-Camera LAB-Tuning Team，MP PL-R&D-Camera LAB-IQA Team，MP PL-R&D-Camera LAB-Tuning Team"),
 ]
+
+FIXED_TESTING_TEAMS = [row for row in DEFAULT_TEAMS if row.type == "testing"]
+FIXED_DEVELOPMENT_TEAMS = [row for row in DEFAULT_TEAMS if row.type == "development"]
 
 DEFAULT_FIELD_MAPPINGS: list[FieldMappingRow] = [
     FieldMappingRow(
@@ -134,7 +174,7 @@ DEFAULT_FORECAST_DEFAULTS = ForecastDefaults(
         MilestoneParam(name="V1", week="26W17", date="2026-04-20"),
         MilestoneParam(name="V4", week="26W23", date="2026-06-01"),
     ],
-    params=ForecastDefaultsParams(newProjectName="Aurora NP TMO", startWeek="26W2", endWeek="26W27"),
+    params=ForecastParams(newProjectName="Aurora NP TMO", startWeek="26W2", endWeek="26W27"),
 )
 
 DEFAULT_COMPARE_COLORS = CompareColorsConfig(
@@ -962,6 +1002,250 @@ def _make_weekly(seed: str, start_week: str, end_week: str) -> list[WeeklyPoint]
     return out
 
 
+def _normalize_comparable(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_idh_category(value: object) -> bool:
+    return _normalize_comparable(value) in IDH_PROJECT_CATEGORIES
+
+
+def _split_legacy_chipset_status(value: object) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if "_" not in raw:
+        return "", ""
+    newness, vendor = raw.split("_", 1)
+    return vendor.strip(), newness.strip()
+
+
+def _chipset_vendor_from(value: object, legacy_status: object = "") -> str:
+    explicit = str(value or "").strip()
+    if explicit:
+        return explicit
+    vendor, _ = _split_legacy_chipset_status(legacy_status)
+    return vendor
+
+
+def _chipset_newness_from(value: object, legacy_status: object = "") -> str:
+    explicit = str(value or "").strip()
+    if explicit:
+        return explicit
+    _, newness = _split_legacy_chipset_status(legacy_status)
+    return newness
+
+
+def _operator_overlap(input_values: list[str], project_values: list[str]) -> float | None:
+    input_set = {_normalize_comparable(x) for x in input_values if _normalize_comparable(x)}
+    project_set = {_normalize_comparable(x) for x in project_values if _normalize_comparable(x)}
+    if not input_set or not project_set:
+        return None
+    return len(input_set & project_set) / len(input_set | project_set)
+
+
+def _fr_band_index(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    for idx, upper in enumerate(FR_QUANTITY_BANDS):
+        if number <= upper:
+            return idx
+    return len(FR_QUANTITY_BANDS)
+
+
+def _fr_band_similarity(input_value: object, project_value: object) -> float | None:
+    input_band = _fr_band_index(input_value)
+    project_band = _fr_band_index(project_value)
+    if input_band is None or project_band is None:
+        return None
+    diff = abs(input_band - project_band)
+    if diff == 0:
+        return 1.0
+    if diff == 1:
+        return 0.75
+    if diff == 2:
+        return 0.4
+    return 0.0
+
+
+def _field_similarity(input_data: ForecastInput, project: ProjectSummary, field_name: str) -> float | None:
+    if field_name == "operatorOverlap":
+        return _operator_overlap(input_data.params.operators, project.operators)
+    if field_name == "frQuantityBand":
+        return _fr_band_similarity(input_data.params.frQuantity, project.frQuantity)
+    if field_name == "chipsetVendor":
+        input_value = _normalize_comparable(
+            _chipset_vendor_from(input_data.params.chipsetVendor, input_data.params.chipsetStatus)
+        )
+        project_value = _normalize_comparable(_chipset_vendor_from(project.chipsetVendor, project.chipsetStatus))
+    else:
+        input_value = _normalize_comparable(getattr(input_data.params, field_name))
+        project_value = _normalize_comparable(getattr(project, field_name))
+    if not input_value or not project_value:
+        return None
+    return 1.0 if input_value == project_value else 0.0
+
+
+def _score_similar_project(input_data: ForecastInput, project: ProjectSummary) -> float | None:
+    input_device = _normalize_comparable(input_data.params.deviceType)
+    project_device = _normalize_comparable(project.deviceType)
+    if input_device and project_device and input_device != project_device:
+        return None
+
+    is_idh = _is_idh_category(input_data.params.projectCategory)
+    project_is_idh = _is_idh_category(project.projectCategory)
+    if _normalize_comparable(input_data.params.projectCategory) and _normalize_comparable(project.projectCategory):
+        if is_idh != project_is_idh:
+            return None
+    if is_idh and not _normalize_comparable(input_data.params.idhVendor):
+        raise ValueError("IDH 项目必须填写外包商，才能预测 Defect 总数")
+
+    weights = IDH_SIMILARITY_WEIGHTS if is_idh else SIMILARITY_WEIGHTS
+    usable: list[tuple[float, float]] = []
+    for field_name, weight in weights:
+        similarity = _field_similarity(input_data, project, field_name)
+        if similarity is not None:
+            usable.append((similarity, weight))
+    if not usable:
+        return None
+
+    total_weight = sum(weight for _, weight in usable)
+    return sum(similarity * (weight / total_weight) for similarity, weight in usable)
+
+
+def _top_similar_projects(input_data: ForecastInput, limit: int = 3) -> list[tuple[ProjectSummary, float]]:
+    scored: list[tuple[ProjectSummary, float]] = []
+    for project in list_project_summaries():
+        if project.name.strip() == input_data.params.newProjectName.strip():
+            continue
+        if not isinstance(project.defects, int) or project.defects <= 0:
+            continue
+        score = _score_similar_project(input_data, project)
+        if score is None or score <= 0:
+            continue
+        scored.append((project, score))
+
+    scored.sort(key=lambda row: (-row[1], -row[0].defects, row[0].name))
+    return scored[:limit]
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return min(high, max(low, value))
+
+
+def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[ProjectSummary, float]]) -> dict[str, float]:
+    params = input_data.params
+    chipset_newness = _chipset_newness_from(params.chipsetNewness, params.chipsetStatus)
+    chipset = 1.2 if _normalize_comparable(chipset_newness) == "new" else 1.0
+    operators = min(1.0 + len(params.operators) * 0.1, 1.5)
+    user_program_count = len(params.userPrograms)
+    user_program_increase = (
+        0.0
+        if user_program_count <= 0
+        else min(0.25, 0.1 + max(0, user_program_count - 1) * 0.05)
+    )
+    support_sim = 0.8 if params.supportSim == "No" else 1.0
+    pipeline = PIPELINE_FACTORS.get(str(params.pipeline or "").strip(), 1.0)
+
+    historical_mm = [
+        float(project.mm)
+        for project, _ in top_projects
+        if project.mm is not None and float(project.mm) > 0
+    ]
+    if params.mm and params.mm > 0 and historical_mm:
+        avg_mm = sum(historical_mm) / len(historical_mm)
+        mm = 1.0 + _clamp((float(params.mm) / avg_mm - 1.0) * 0.8, -0.2, 0.2)
+    else:
+        mm = 1.0
+
+    return {
+        "chipset": chipset,
+        "operators": operators,
+        "userPrograms": 1.0 + user_program_increase,
+        "supportSim": support_sim,
+        "mm": mm,
+        "pipeline": pipeline,
+    }
+
+
+def _predict_defect_total(input_data: ForecastInput) -> tuple[int, int, list[dict[str, object]], dict[str, float]]:
+    top_projects = _top_similar_projects(input_data)
+    if not top_projects:
+        raise ValueError("没有相似度大于 0 的历史项目，无法预测 Defect 总数")
+
+    similarity_sum = sum(score for _, score in top_projects)
+    if similarity_sum <= 0:
+        raise ValueError("相似项目相似度总和为 0，无法计算基准值")
+
+    base_value = sum(project.defects * score for project, score in top_projects) / similarity_sum
+    factors = _forecast_factors(input_data, top_projects)
+    estimated = round(
+        base_value
+        * factors["chipset"]
+        * factors["operators"]
+        * factors["userPrograms"]
+        * factors["supportSim"]
+        * factors["mm"]
+        * factors["pipeline"]
+    )
+    reference_projects = [
+        {
+            "name": project.name,
+            "displayName": project.displayName,
+            "defects": project.defects,
+            "mm": project.mm,
+            "similarity": round(score * 100, 2),
+        }
+        for project, score in top_projects
+    ]
+    return max(0, estimated), round(base_value), reference_projects, factors
+
+
+def _scale_weekly_created_total(weekly: list[WeeklyPoint], target_total: int) -> list[WeeklyPoint]:
+    if not weekly:
+        return weekly
+    target = max(0, int(target_total))
+    current_total = sum(max(0, row.created) for row in weekly)
+    if current_total <= 0:
+        base = target // len(weekly)
+        remainder = target % len(weekly)
+        created_values = [base + (1 if idx < remainder else 0) for idx in range(len(weekly))]
+        fixed_values = [0 for _ in weekly]
+    else:
+        raw_created = [max(0, row.created) * target / current_total for row in weekly]
+        created_values = [int(value) for value in raw_created]
+        remainder = target - sum(created_values)
+        order = sorted(range(len(raw_created)), key=lambda idx: raw_created[idx] - created_values[idx], reverse=True)
+        for idx in order[:remainder]:
+            created_values[idx] += 1
+        scale = target / current_total
+        fixed_values = [min(created_values[idx], max(0, round(weekly[idx].fixed * scale))) for idx in range(len(weekly))]
+
+    out: list[WeeklyPoint] = []
+    cum_created = 0
+    cum_fixed = 0
+    for row, created, fixed in zip(weekly, created_values, fixed_values):
+        cum_created += created
+        cum_fixed += fixed
+        out.append(
+            WeeklyPoint(
+                week=row.week,
+                weekLabel=row.weekLabel,
+                date=row.date,
+                created=created,
+                fixed=fixed,
+                cumCreated=cum_created,
+                cumFixed=cum_fixed,
+                backlog=max(0, cum_created - cum_fixed),
+            )
+        )
+    return out
+
+
 def ensure_seed_data() -> None:
     with get_conn() as conn:
         count = conn.execute("SELECT COUNT(*) AS c FROM project_summary").fetchone()["c"]
@@ -1005,6 +1289,9 @@ def _project_summary_from_row(row: sqlite3.Row) -> ProjectSummary:
     data = dict(row)
     data["operators"] = json.loads(data.pop("operatorsJson") or "[]")
     data["userPrograms"] = json.loads(data.pop("userProgramsJson") or "[]")
+    legacy_vendor, legacy_newness = _split_legacy_chipset_status(data.get("chipsetStatus"))
+    data["chipsetVendor"] = data.get("chipsetVendor") or legacy_vendor or None
+    data["chipsetNewness"] = data.get("chipsetNewness") or legacy_newness or None
     return ProjectSummary(**data)
 
 
@@ -1024,6 +1311,8 @@ def list_project_summaries() -> list[ProjectSummary]:
               os,
               device_type as deviceType,
               chipset_status as chipsetStatus,
+              chipset_vendor as chipsetVendor,
+              chipset_newness as chipsetNewness,
               pipeline,
               operators_json as operatorsJson,
               user_programs_json as userProgramsJson,
@@ -1104,6 +1393,8 @@ def get_project_history(project_name: str) -> ProjectHistory:
               os,
               device_type as deviceType,
               chipset_status as chipsetStatus,
+              chipset_vendor as chipsetVendor,
+              chipset_newness as chipsetNewness,
               pipeline,
               operators_json as operatorsJson,
               user_programs_json as userProgramsJson,
@@ -1170,11 +1461,19 @@ def get_project_history(project_name: str) -> ProjectHistory:
 
 
 def generate_forecast(input_data: ForecastInput) -> ForecastResult:
-    seed_parts = [input_data.params.newProjectName, input_data.params.startWeek, input_data.params.endWeek]
-    if input_data.refProjects:
-        seed_parts.extend([f"{x.project}:{x.similarity}" for x in input_data.refProjects])
+    estimated_defects, base_value, reference_projects, factors = _predict_defect_total(input_data)
+
+    seed_parts = [
+        input_data.params.newProjectName,
+        input_data.params.startWeek,
+        input_data.params.endWeek,
+        str(estimated_defects),
+    ]
     seed = "|".join(seed_parts)
-    weekly = _make_weekly(seed, input_data.params.startWeek, input_data.params.endWeek)
+    weekly = _scale_weekly_created_total(
+        _make_weekly(seed, input_data.params.startWeek, input_data.params.endWeek),
+        estimated_defects,
+    )
 
     created_teams = []
     for team in input_data.enabledTestingTeams:
@@ -1209,17 +1508,28 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
             "milestones": milestones,
         },
         teamSummary=team_summary,
+        estimatedDefects=estimated_defects,
+        baseValue=base_value,
+        referenceProjects=reference_projects,
+        factors=factors,
     )
 
 
 def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> None:
     normalized_source = "jira" if source == "jira" else "manual"
+    chipset_vendor = _chipset_vendor_from(project.chipsetVendor, project.chipsetStatus)
+    chipset_newness = _chipset_newness_from(project.chipsetNewness, project.chipsetStatus)
+    chipset_status = (project.chipsetStatus or "").strip()
+    if not chipset_status and chipset_vendor and chipset_newness:
+        chipset_status = f"{chipset_newness}_{chipset_vendor}"
     metadata_values = (
         (project.projectCategory or "").strip() or None,
         (project.region or "").strip() or None,
         (project.os or "").strip() or None,
         (project.deviceType or "").strip() or None,
-        (project.chipsetStatus or "").strip() or None,
+        chipset_status or None,
+        chipset_vendor or None,
+        chipset_newness or None,
         (project.pipeline or "").strip() or None,
         json.dumps(project.operators, ensure_ascii=False),
         json.dumps(project.userPrograms, ensure_ascii=False),
@@ -1245,6 +1555,8 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
               os,
               device_type,
               chipset_status,
+              chipset_vendor,
+              chipset_newness,
               pipeline,
               operators_json,
               user_programs_json,
@@ -1257,7 +1569,7 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
               source,
               updated_at
             )
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(name) DO UPDATE SET
               display_name = CASE WHEN excluded.source = 'jira' AND excluded.display_name = '' THEN project_summary.display_name ELSE excluded.display_name END,
               cycle = excluded.cycle,
@@ -1269,6 +1581,8 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
               os = CASE WHEN excluded.source = 'jira' THEN project_summary.os ELSE excluded.os END,
               device_type = CASE WHEN excluded.source = 'jira' THEN project_summary.device_type ELSE excluded.device_type END,
               chipset_status = CASE WHEN excluded.source = 'jira' THEN project_summary.chipset_status ELSE excluded.chipset_status END,
+              chipset_vendor = CASE WHEN excluded.source = 'jira' THEN project_summary.chipset_vendor ELSE excluded.chipset_vendor END,
+              chipset_newness = CASE WHEN excluded.source = 'jira' THEN project_summary.chipset_newness ELSE excluded.chipset_newness END,
               pipeline = CASE WHEN excluded.source = 'jira' THEN project_summary.pipeline ELSE excluded.pipeline END,
               operators_json = CASE WHEN excluded.source = 'jira' THEN project_summary.operators_json ELSE excluded.operators_json END,
               user_programs_json = CASE WHEN excluded.source = 'jira' THEN project_summary.user_programs_json ELSE excluded.user_programs_json END,
@@ -1687,33 +2001,15 @@ def _save_app_config(key: str, payload: object) -> None:
 
 
 def list_teams() -> list[TeamConfigRow]:
-    with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, name, team_type, enabled, note
-            FROM team_config
-            ORDER BY name
-            """
-        ).fetchall()
-    if not rows:
-        return DEFAULT_TEAMS
-    return [
-        TeamConfigRow(
-            id=r["id"],
-            name=r["name"],
-            type="testing" if r["team_type"] == "testing" else "development",
-            enabled=bool(r["enabled"]),
-            note=r["note"] or "",
-        )
-        for r in rows
-    ]
+    return [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
 
 
 def save_teams(rows: list[TeamConfigRow]) -> list[TeamConfigRow]:
+    rows_to_save = [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
     with get_conn() as conn:
         conn.execute("DELETE FROM team_config")
         now = datetime.utcnow().isoformat()
-        for row in rows:
+        for row in rows_to_save:
             conn.execute(
                 """
                 INSERT INTO team_config(id, name, team_type, enabled, note, updated_at)

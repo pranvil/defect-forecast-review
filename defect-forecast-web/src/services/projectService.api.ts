@@ -18,6 +18,8 @@ type ProjectMetadataOverlay = Partial<
     | 'os'
     | 'deviceType'
     | 'chipsetStatus'
+    | 'chipsetVendor'
+    | 'chipsetNewness'
     | 'pipeline'
     | 'operators'
     | 'userPrograms'
@@ -62,6 +64,8 @@ function pickMetadata(project: ProjectSummary): ProjectMetadataOverlay {
     os: project.os,
     deviceType: project.deviceType,
     chipsetStatus: project.chipsetStatus,
+    chipsetVendor: project.chipsetVendor,
+    chipsetNewness: project.chipsetNewness,
     pipeline: project.pipeline,
     operators: project.operators,
     userPrograms: project.userPrograms,
