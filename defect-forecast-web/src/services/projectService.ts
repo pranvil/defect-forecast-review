@@ -8,6 +8,20 @@ export interface ProjectSummary {
   defects: number
   teams: number
   similarity?: number
+  projectCategory?: string
+  region?: string
+  os?: string
+  deviceType?: string
+  chipsetStatus?: string
+  pipeline?: string
+  operators?: string[]
+  userPrograms?: string[]
+  idhVendor?: string
+  frQuantity?: number
+  mm?: number
+  supportSim?: 'Yes' | 'No'
+  validStartDate?: string
+  validEndDate?: string
 }
 
 export type CompareAxisMode = 'calendar' | 'relative'
@@ -63,4 +77,3 @@ export interface ProjectCompareResult {
   }
   weekly: ProjectComparePoint[]
 }
-

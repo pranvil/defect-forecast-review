@@ -101,6 +101,7 @@ export function ForecastPage() {
   const dataset = result.dataset
   const teamSummary = result.teamSummary
   const finalRow = dataset.weekly[dataset.weekly.length - 1]!
+  const estimatedDefects = result.estimatedDefects ?? finalRow.cumCreated
 
   return (
     <div className="space-y-6">
@@ -174,9 +175,9 @@ export function ForecastPage() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Kpi
-          title="预测总 Created"
-          value={finalRow.cumCreated}
-          sub={params.newProjectName}
+          title="预估 Bug 总数"
+          value={estimatedDefects}
+          sub={result.baseValue ? `Base ${result.baseValue}` : params.newProjectName}
           icon={Sparkles}
         />
         <Kpi
@@ -188,8 +189,8 @@ export function ForecastPage() {
         <Kpi title="最终 Backlog" value={finalRow.backlog} sub="累计创建 - 累计解决" icon={History} />
         <Kpi
           title="参考项目数"
-          value={refProjects.length}
-          sub="自动识别 + 手工补充"
+          value={result.referenceProjects?.length ?? refProjects.length}
+          sub="相似度 Top 3 / 手工确认"
           icon={Wand2}
         />
       </div>

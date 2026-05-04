@@ -20,13 +20,14 @@ import {
   recordRecentProjectKey,
   toggleFavoriteProjectKey,
 } from '@/utils/projectLibrary'
+import { PROJECT_METADATA_COLUMNS, formatProjectMetadataCell } from '@/utils/projectMetadataColumns'
 import { addCalendarDaysIso, businessWeekBoundsIso, firstDayDateOfWeek } from '@/utils/week'
 
 const PROJECT_PAGE_SIZE = 40
 const HISTORY_COMPARE_PREFS_KEY = 'drp.history.compare.prefs.v1'
 const DEFAULT_JIRA_BASE_URL = 'https://jira.tcl.com'
 const JIRA_PROJECT_FETCH_FILTER_CLAUSE =
-  'issuetype in (defect, defect_new) AND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED") AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR")'
+  'issuetype in (defect, defect_new) AND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED") AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR" AND summary !~ "CloneMP") AND (resolution is EMPTY OR resolution not in ("Needn\'t Fixed", "Duplicate", "Duplicated"))'
 
 function isCompareAxisMode(value: unknown): value is CompareAxisMode {
   return value === 'calendar' || value === 'relative'
@@ -723,8 +724,10 @@ export function useHistoryPageData() {
 
   const exportProjectSummary = React.useCallback(() => {
     const csvRows = [
-      ['projectKey', 'projectName', 'cycle', 'defects', 'teams'],
-      ...projects.map((p) => [p.name, p.displayName?.trim() || '', p.cycle, String(p.defects), String(p.teams)]),
+      PROJECT_METADATA_COLUMNS.map((column) => column.label),
+      ...projects.map((p) =>
+        PROJECT_METADATA_COLUMNS.map((column) => formatProjectMetadataCell(p, column.id).replaceAll(',', '，')),
+      ),
     ]
     const content = csvRows.map((x) => x.join(',')).join('\n')
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
@@ -786,6 +789,7 @@ export function useHistoryPageData() {
       })
       await services.projectService.upsertCachedProjects([
         {
+          ...focusProjectSummary,
           name: keyForRequest,
           displayName: focusProjectSummary?.displayName,
           cycle: res.cycleLabel.replace(' - ', '-'),

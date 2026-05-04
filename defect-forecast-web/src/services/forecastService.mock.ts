@@ -1,21 +1,21 @@
 import { forecastCreatedTeams, forecastFixedTeams, forecastWeeklyBase } from '@/data/mock/forecast'
 import { delay } from '@/services/delay'
+import { projectServiceMock } from '@/services/projectService.mock'
 import type { ForecastResult, ForecastService } from '@/services/forecastService'
-import { calculate_defects } from '@/utils/defectCalculation'
+import { calculate_defects, defectInputFromParams } from '@/utils/defectCalculation'
 import { compareWeekAsc, firstDayDateOfWeek, parseYearWeek, weekIndex } from '@/utils/week'
 
 export const forecastServiceMock: ForecastService = {
   async getForecastResult(input): Promise<ForecastResult> {
     await delay(180)
-    calculate_defects({
-      Project_category: input.params.projectCategory,
-      Operators: input.params.operators,
-      Chipset_Status: input.params.chipsetStatus,
-      User_Programs: input.params.userPrograms,
-      Support_SIM: input.params.supportSim,
-      MM: input.params.mm,
-      FR_Quantity: input.params.frQuantity,
-    })
+    const historyProjects = await projectServiceMock.listCachedProjects()
+    const selectedProjectNames = new Set(input.refProjects.map((row) => row.project))
+    const calculation = calculate_defects(
+      defectInputFromParams(input.params),
+      selectedProjectNames.size
+        ? historyProjects.filter((project) => selectedProjectNames.has(project.name))
+        : historyProjects,
+    )
 
     const startParsed = parseYearWeek(input.params.startWeek)
     const endParsed = parseYearWeek(input.params.endWeek)
@@ -127,6 +127,15 @@ export const forecastServiceMock: ForecastService = {
         milestones,
       },
       teamSummary,
+      estimatedDefects: calculation?.estimatedDefects,
+      baseValue: calculation?.baseValue,
+      referenceProjects: calculation?.topProjects.map(({ project, score }) => ({
+        name: project.name,
+        displayName: project.displayName,
+        defects: project.defects,
+        mm: project.mm,
+        similarity: Math.round(score * 100),
+      })),
     }
   },
   async saveForecastVersion(req) {

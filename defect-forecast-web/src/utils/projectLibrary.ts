@@ -58,6 +58,20 @@ export function getProjectSearchText(project: ProjectSummary) {
     project.cycle,
     String(project.defects),
     String(project.teams),
+    project.projectCategory ?? '',
+    project.region ?? '',
+    project.os ?? '',
+    project.deviceType ?? '',
+    project.chipsetStatus ?? '',
+    project.pipeline ?? '',
+    project.operators?.join(' ') ?? '',
+    project.userPrograms?.join(' ') ?? '',
+    project.idhVendor ?? '',
+    project.frQuantity == null ? '' : String(project.frQuantity),
+    project.mm == null ? '' : String(project.mm),
+    project.supportSim ?? '',
+    project.validStartDate ?? '',
+    project.validEndDate ?? '',
   ]
     .join(' ')
     .toLowerCase()

@@ -47,6 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { HistoricalProjectMetadataCard } from '@/components/config/HistoricalProjectMetadataCard'
 
 export function ConfigPage() {
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
@@ -201,6 +202,8 @@ export function ConfigPage() {
             </div>
           </CardContent>
         </Card>
+
+        <HistoricalProjectMetadataCard />
 
         <Card className="rounded-2xl">
           <CardHeader>

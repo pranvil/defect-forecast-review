@@ -14,6 +14,7 @@ export const defaultForecastParams: ForecastProjectParams = {
   os: 'Android',
   deviceType: 'Smart phone',
   chipsetStatus: 'Old_MTK',
+  pipeline: '无',
   operators: [],
   userPrograms: [],
   idhVendor: '',

@@ -45,7 +45,7 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
   const [jql, setJql] = React.useState(
-    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
+    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
   )
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
@@ -184,13 +184,23 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
 
   const finishSync = async (keyForRequest: string, res: JiraFetchResult, modeLabel: string) => {
     persistLastResult(res)
+    const normalizedKey = keyForRequest.trim().toUpperCase()
+    const existing =
+      cachedProjects.find((project) => project.name.toUpperCase() === normalizedKey) ??
+      (await services.projectService
+        .listCachedProjects()
+        .then((projects) => projects.find((project) => project.name.toUpperCase() === normalizedKey))
+        .catch(() => undefined))
     await services.projectService.upsertCachedProjects([
       {
-        name: keyForRequest,
-        displayName: projectDisplayName.trim() ? projectDisplayName.trim() : undefined,
+        ...existing,
+        name: normalizedKey,
+        displayName: projectDisplayName.trim() ? projectDisplayName.trim() : existing?.displayName,
         cycle: res.cycleLabel.replace(' - ', '-'),
         defects: res.fetchedCount,
         teams: Math.max(1, Math.round(res.fetchedCount / 200)),
+        validStartDate: res.periodStart ? res.periodStart.slice(0, 10) : startDate || undefined,
+        validEndDate: res.periodEnd ? res.periodEnd.slice(0, 10) : endDate || undefined,
       },
     ])
     await refreshCache()

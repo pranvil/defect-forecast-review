@@ -28,6 +28,21 @@ function loadCache(): ProjectSummary[] | null {
         defects: x.defects!,
         teams: x.teams!,
         similarity: typeof x.similarity === 'number' ? x.similarity : undefined,
+        projectCategory: typeof x.projectCategory === 'string' ? x.projectCategory : undefined,
+        region: typeof x.region === 'string' ? x.region : undefined,
+        os: typeof x.os === 'string' ? x.os : undefined,
+        deviceType: typeof x.deviceType === 'string' ? x.deviceType : undefined,
+        chipsetStatus: typeof x.chipsetStatus === 'string' ? x.chipsetStatus : undefined,
+        pipeline: typeof x.pipeline === 'string' ? x.pipeline : undefined,
+        operators: Array.isArray(x.operators) ? x.operators.filter((v): v is string => typeof v === 'string') : undefined,
+        userPrograms: Array.isArray(x.userPrograms) ? x.userPrograms.filter((v): v is string => typeof v === 'string') : undefined,
+        idhVendor: typeof x.idhVendor === 'string' ? x.idhVendor : undefined,
+        frQuantity: typeof x.frQuantity === 'number' ? x.frQuantity : undefined,
+        mm: typeof x.mm === 'number' ? x.mm : undefined,
+        supportSim:
+          x.supportSim === 'No' ? ('No' as const) : x.supportSim === 'Yes' ? ('Yes' as const) : undefined,
+        validStartDate: typeof x.validStartDate === 'string' ? x.validStartDate : undefined,
+        validEndDate: typeof x.validEndDate === 'string' ? x.validEndDate : undefined,
       }))
     return rows.length ? rows : null
   } catch {
@@ -68,6 +83,20 @@ let cachedProjects: ProjectSummary[] =
     defects: projectLibrary[name]!.defects,
     teams: projectLibrary[name]!.teams,
     similarity: projectLibrary[name]!.similarity,
+    projectCategory: projectLibrary[name]!.projectCategory,
+    region: projectLibrary[name]!.region,
+    os: projectLibrary[name]!.os,
+    deviceType: projectLibrary[name]!.deviceType,
+    chipsetStatus: projectLibrary[name]!.chipsetStatus,
+    pipeline: projectLibrary[name]!.pipeline,
+    operators: projectLibrary[name]!.operators,
+    userPrograms: projectLibrary[name]!.userPrograms,
+    idhVendor: projectLibrary[name]!.idhVendor,
+    frQuantity: projectLibrary[name]!.frQuantity,
+    mm: projectLibrary[name]!.mm,
+    supportSim: projectLibrary[name]!.supportSim,
+    validStartDate: projectLibrary[name]!.validStartDate,
+    validEndDate: projectLibrary[name]!.validEndDate,
   }))
 
 export const projectServiceMock: ProjectService = {
@@ -180,4 +209,3 @@ export const projectServiceMock: ProjectService = {
     }
   },
 }
-

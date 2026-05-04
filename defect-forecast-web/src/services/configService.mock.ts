@@ -17,6 +17,7 @@ const DEFAULT_FORECAST_PARAMS: ForecastDefaultsPayload['params'] = {
   os: 'Android',
   deviceType: 'Smart phone',
   chipsetStatus: 'Old_MTK',
+  pipeline: '无',
   operators: [],
   userPrograms: [],
   idhVendor: '',

@@ -7,6 +7,98 @@ import type {
 import type { ProjectHistory } from '@/types/project'
 import { httpDelete, httpGet, httpPut } from '@/services/http'
 
+const PROJECT_METADATA_OVERLAY_KEY = 'drp.projectMetadata.overlay.v1'
+
+type ProjectMetadataOverlay = Partial<
+  Pick<
+    ProjectSummary,
+    | 'displayName'
+    | 'projectCategory'
+    | 'region'
+    | 'os'
+    | 'deviceType'
+    | 'chipsetStatus'
+    | 'pipeline'
+    | 'operators'
+    | 'userPrograms'
+    | 'idhVendor'
+    | 'frQuantity'
+    | 'mm'
+    | 'supportSim'
+    | 'validStartDate'
+    | 'validEndDate'
+  >
+>
+
+function normalizeProjectKey(projectName: string) {
+  return projectName.trim().toUpperCase()
+}
+
+function readMetadataOverlay(): Record<string, ProjectMetadataOverlay> {
+  try {
+    const raw = localStorage.getItem(PROJECT_METADATA_OVERLAY_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return parsed as Record<string, ProjectMetadataOverlay>
+  } catch {
+    return {}
+  }
+}
+
+function writeMetadataOverlay(rows: Record<string, ProjectMetadataOverlay>) {
+  try {
+    localStorage.setItem(PROJECT_METADATA_OVERLAY_KEY, JSON.stringify(rows))
+  } catch {
+    // ignore local cache failures
+  }
+}
+
+function pickMetadata(project: ProjectSummary): ProjectMetadataOverlay {
+  return {
+    displayName: project.displayName,
+    projectCategory: project.projectCategory,
+    region: project.region,
+    os: project.os,
+    deviceType: project.deviceType,
+    chipsetStatus: project.chipsetStatus,
+    pipeline: project.pipeline,
+    operators: project.operators,
+    userPrograms: project.userPrograms,
+    idhVendor: project.idhVendor,
+    frQuantity: project.frQuantity,
+    mm: project.mm,
+    supportSim: project.supportSim,
+    validStartDate: project.validStartDate,
+    validEndDate: project.validEndDate,
+  }
+}
+
+function hasMetadataValue(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0
+  return value !== undefined && value !== null && value !== ''
+}
+
+function saveMetadataOverlay(projects: ProjectSummary[]) {
+  const overlay = readMetadataOverlay()
+  projects.forEach((project) => {
+    const key = normalizeProjectKey(project.name)
+    if (!key) return
+    const metadata = pickMetadata(project)
+    const hasAny = Object.values(metadata).some(hasMetadataValue)
+    if (hasAny) {
+      overlay[key] = { ...overlay[key], ...metadata }
+    }
+  })
+  writeMetadataOverlay(overlay)
+}
+
+function mergeMetadataOverlay<T extends ProjectSummary | ProjectHistory>(project: T): T {
+  const overlay = readMetadataOverlay()[normalizeProjectKey(project.name)]
+  if (!overlay) return project
+  return { ...project, ...overlay }
+}
+
 function parseWeekLabel(label: string): [number, number] {
   const clean = label.trim().toUpperCase().replaceAll(' ', '')
   const match = /^(\d{2})W(\d{1,2})$/.exec(clean)
@@ -26,10 +118,12 @@ function sortWeekLabels(labels: string[]): string[] {
 
 export const projectServiceApi: ProjectService = {
   async listCachedProjects(): Promise<ProjectSummary[]> {
-    return httpGet<ProjectSummary[]>('/api/projects/cached')
+    const projects = await httpGet<ProjectSummary[]>('/api/projects/cached')
+    return projects.map(mergeMetadataOverlay)
   },
   async getProjectHistory(projectName: string): Promise<ProjectHistory> {
-    return httpGet<ProjectHistory>(`/api/projects/${encodeURIComponent(projectName)}/history`)
+    const project = await httpGet<ProjectHistory>(`/api/projects/${encodeURIComponent(projectName)}/history`)
+    return mergeMetadataOverlay(project)
   },
   async buildCreatedCompareData(
     projectNames: string[],
@@ -90,9 +184,13 @@ export const projectServiceApi: ProjectService = {
     return httpGet<string[]>('/api/config/compare-colors')
   },
   async upsertCachedProjects(projects: ProjectSummary[]): Promise<void> {
+    saveMetadataOverlay(projects)
     await httpPut<ProjectSummary[], ProjectSummary[]>('/api/projects/cached', projects)
   },
   async deleteCachedProject(projectName: string): Promise<void> {
+    const overlay = readMetadataOverlay()
+    delete overlay[normalizeProjectKey(projectName)]
+    writeMetadataOverlay(overlay)
     await httpDelete(`/api/projects/cached/${encodeURIComponent(projectName)}`)
   },
   async getProjectCompare(projectName: string, forecastVersionId?: string): Promise<ProjectCompareResult> {

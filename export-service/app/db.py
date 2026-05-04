@@ -54,6 +54,20 @@ def migrate() -> None:
               defects INTEGER NOT NULL,
               teams INTEGER NOT NULL,
               similarity REAL,
+              project_category TEXT,
+              region TEXT,
+              os TEXT,
+              device_type TEXT,
+              chipset_status TEXT,
+              pipeline TEXT,
+              operators_json TEXT NOT NULL DEFAULT '[]',
+              user_programs_json TEXT NOT NULL DEFAULT '[]',
+              idh_vendor TEXT,
+              fr_quantity REAL,
+              mm REAL,
+              support_sim TEXT,
+              valid_start_date TEXT,
+              valid_end_date TEXT,
               source TEXT NOT NULL DEFAULT 'history',
               updated_at TEXT NOT NULL
             )
@@ -63,6 +77,25 @@ def migrate() -> None:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(project_summary)").fetchall()}
         if "display_name" not in cols:
             conn.execute("ALTER TABLE project_summary ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+        project_summary_defaults = {
+            "project_category": "TEXT",
+            "region": "TEXT",
+            "os": "TEXT",
+            "device_type": "TEXT",
+            "chipset_status": "TEXT",
+            "pipeline": "TEXT",
+            "operators_json": "TEXT NOT NULL DEFAULT '[]'",
+            "user_programs_json": "TEXT NOT NULL DEFAULT '[]'",
+            "idh_vendor": "TEXT",
+            "fr_quantity": "REAL",
+            "mm": "REAL",
+            "support_sim": "TEXT",
+            "valid_start_date": "TEXT",
+            "valid_end_date": "TEXT",
+        }
+        for col, ddl in project_summary_defaults.items():
+            if col not in cols:
+                conn.execute(f"ALTER TABLE project_summary ADD COLUMN {col} {ddl}")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS project_weekly (

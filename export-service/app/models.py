@@ -47,6 +47,20 @@ class ProjectSummary(BaseModel):
     defects: int
     teams: int
     similarity: Optional[float] = None
+    projectCategory: Optional[str] = None
+    region: Optional[str] = None
+    os: Optional[str] = None
+    deviceType: Optional[str] = None
+    chipsetStatus: Optional[str] = None
+    pipeline: Optional[str] = None
+    operators: List[str] = Field(default_factory=list)
+    userPrograms: List[str] = Field(default_factory=list)
+    idhVendor: Optional[str] = None
+    frQuantity: Optional[float] = None
+    mm: Optional[float] = None
+    supportSim: Optional[Literal["Yes", "No"]] = None
+    validStartDate: Optional[str] = None
+    validEndDate: Optional[str] = None
 
 
 class ProjectHistory(BaseModel):
@@ -56,6 +70,20 @@ class ProjectHistory(BaseModel):
     defects: int
     teams: int
     similarity: Optional[float] = None
+    projectCategory: Optional[str] = None
+    region: Optional[str] = None
+    os: Optional[str] = None
+    deviceType: Optional[str] = None
+    chipsetStatus: Optional[str] = None
+    pipeline: Optional[str] = None
+    operators: List[str] = Field(default_factory=list)
+    userPrograms: List[str] = Field(default_factory=list)
+    idhVendor: Optional[str] = None
+    frQuantity: Optional[float] = None
+    mm: Optional[float] = None
+    supportSim: Optional[Literal["Yes", "No"]] = None
+    validStartDate: Optional[str] = None
+    validEndDate: Optional[str] = None
     weekly: List[WeeklyPoint]
     createdTeams: List[TeamWeeklyRow] = Field(default_factory=list)
     fixedTeams: List[TeamWeeklyRow] = Field(default_factory=list)

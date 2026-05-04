@@ -27,9 +27,20 @@ $ReqFile = Join-Path $BackendRoot "requirements.txt"
 function Stop-DrpDevPorts {
     param([int[]]$Ports)
     foreach ($port in $Ports) {
+        $pids = @()
         $conns = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
         foreach ($c in $conns) {
-            $owningPid = $c.OwningProcess
+            if ($c.OwningProcess -and $c.OwningProcess -ne 0) {
+                $pids += [int]$c.OwningProcess
+            }
+        }
+        $netstatRows = @(netstat -ano | Select-String -Pattern "LISTENING\s+(\d+)$" | Where-Object { $_.Line -match "[:.]$port\s+" })
+        foreach ($row in $netstatRows) {
+            if ($row.Line -match "LISTENING\s+(\d+)$") {
+                $pids += [int]$Matches[1]
+            }
+        }
+        foreach ($owningPid in ($pids | Sort-Object -Unique)) {
             try {
                 $p = Get-Process -Id $owningPid -ErrorAction SilentlyContinue
                 $name = if ($p) { $p.ProcessName } else { "?" }

@@ -1,8 +1,10 @@
 import {
+  Columns3,
   FolderKanban,
   Star,
   Trash2,
 } from 'lucide-react'
+import * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { ProjectCompareTab } from '@/components/project-hub/detail-tabs/ProjectCompareTab'
 import { ProjectInfoTab } from '@/components/project-hub/detail-tabs/ProjectInfoTab'
@@ -13,8 +15,22 @@ import { ProjectTrendTab } from '@/components/project-hub/detail-tabs/ProjectTre
 import { ProjectDetailSection } from '@/components/project-hub/ProjectDetailSection'
 import { ProjectLibrarySection } from '@/components/project-hub/ProjectLibrarySection'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useHistoryPageData } from '@/hooks/useHistoryPageData'
+import {
+  DEFAULT_PROJECT_METADATA_COLUMN_IDS,
+  PROJECT_METADATA_COLUMNS,
+  type ProjectMetadataColumnId,
+  formatProjectMetadataCell,
+} from '@/utils/projectMetadataColumns'
 
 type HistoryPageProps = {
   mode?: 'full' | 'library' | 'detail'
@@ -101,6 +117,19 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
   } = useHistoryPageData()
   const showLibrary = mode !== 'detail'
   const showDetail = mode !== 'library'
+  const [visibleProjectColumnIds, setVisibleProjectColumnIds] = React.useState<ProjectMetadataColumnId[]>(
+    DEFAULT_PROJECT_METADATA_COLUMN_IDS,
+  )
+  const visibleProjectColumns = React.useMemo(
+    () => PROJECT_METADATA_COLUMNS.filter((column) => visibleProjectColumnIds.includes(column.id)),
+    [visibleProjectColumnIds],
+  )
+  const toggleProjectColumn = (columnId: ProjectMetadataColumnId, checked: boolean) => {
+    setVisibleProjectColumnIds((current) => {
+      if (checked) return current.includes(columnId) ? current : [...current, columnId]
+      return current.filter((id) => id !== columnId)
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -123,15 +152,39 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
           projectTotalPages={projectTotalPages}
           listContent={
             projectListMode === 'table' ? (
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="inline-flex h-8 items-center justify-center rounded-xl border border-input bg-background px-3 text-sm font-medium shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                      <Columns3 className="mr-2 h-4 w-4" />
+                      显示字段
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>项目列表字段</DropdownMenuLabel>
+                        {PROJECT_METADATA_COLUMNS.map((column) => (
+                          <DropdownMenuCheckboxItem
+                            key={column.id}
+                            checked={visibleProjectColumnIds.includes(column.id)}
+                            onCheckedChange={(checked) => toggleProjectColumn(column.id, checked === true)}
+                          >
+                            {column.label}
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <div className="max-h-[min(60vh,520px)] overflow-auto rounded-xl border">
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-10 text-center">对比</TableHead>
-                        <TableHead>项目</TableHead>
-                        <TableHead className="hidden sm:table-cell">周期</TableHead>
-                        <TableHead className="hidden text-right md:table-cell">Defect</TableHead>
-                        <TableHead className="hidden text-right lg:table-cell">团队</TableHead>
+                        {visibleProjectColumns.map((column) => (
+                          <TableHead key={column.id} className={column.align === 'right' ? 'text-right' : undefined}>
+                            {column.label}
+                          </TableHead>
+                        ))}
                         <TableHead className="text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -154,23 +207,38 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
                                 />
                               </div>
                             </TableCell>
-                            <TableCell>
-                              <button
-                                type="button"
-                                className="font-medium text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
-                                onClick={() => openProjectDetailView(p.name)}
+                            {visibleProjectColumns.map((column) => (
+                              <TableCell
+                                key={column.id}
+                                className={[
+                                  column.id === 'name' ? 'font-mono text-xs' : '',
+                                  column.id === 'validWindow' ? 'whitespace-nowrap text-slate-500' : '',
+                                  column.align === 'right' ? 'text-right' : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
                               >
-                                {formatProjectLabel(p.name)}
-                              </button>
-                              <div className="mt-1 flex flex-wrap gap-1 text-xs text-slate-500">
-                                {isFavorite ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">已收藏</span> : null}
-                                {isRecent ? <span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">最近使用</span> : null}
-                              </div>
-                              <div className="text-xs text-slate-500 sm:hidden">{p.cycle}</div>
-                            </TableCell>
-                            <TableCell className="hidden text-slate-600 sm:table-cell">{p.cycle}</TableCell>
-                            <TableCell className="hidden text-right md:table-cell">{p.defects}</TableCell>
-                            <TableCell className="hidden text-right lg:table-cell">{p.teams}</TableCell>
+                                {column.id === 'name' ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="font-medium text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                                      onClick={() => openProjectDetailView(p.name)}
+                                    >
+                                      {formatProjectMetadataCell(p, column.id)}
+                                    </button>
+                                    <div className="mt-1 flex flex-wrap gap-1 text-xs text-slate-500">
+                                      {isFavorite ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">已收藏</span> : null}
+                                      {isRecent ? <span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">最近使用</span> : null}
+                                    </div>
+                                  </>
+                                ) : column.id === 'displayName' ? (
+                                  p.displayName ? formatProjectMetadataCell(p, column.id) : formatProjectLabel(p.name)
+                                ) : (
+                                  formatProjectMetadataCell(p, column.id)
+                                )}
+                              </TableCell>
+                            ))}
                             <TableCell className="text-right">
                               <div className="flex flex-wrap justify-end gap-1">
                                 <Button
@@ -206,6 +274,7 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
                     </TableBody>
                   </Table>
                 </div>
+              </div>
               ) : (
                 <div className="max-h-[min(60vh,520px)] overflow-y-auto pr-1">
                   <div className="flex flex-wrap gap-3">

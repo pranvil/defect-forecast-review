@@ -29,9 +29,20 @@ export interface ForecastTeamSummaryRow {
   fixed: number
 }
 
+export interface ForecastReferenceProjectRow {
+  name: string
+  displayName?: string
+  defects: number
+  mm?: number
+  similarity: number
+}
+
 export interface ForecastResult {
   dataset: ForecastDataset
   teamSummary: ForecastTeamSummaryRow[]
+  estimatedDefects?: number
+  baseValue?: number
+  referenceProjects?: ForecastReferenceProjectRow[]
 }
 
 export interface ForecastVersionRow {

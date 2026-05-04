@@ -43,6 +43,7 @@ import {
   parseIsoDateLocal,
 } from '@/utils/week'
 import { formatProjectLabel } from '@/utils/projectLibrary'
+import { defectInputFromParams, findTopSimilarProjects } from '@/utils/defectCalculation'
 import {
   Dialog,
   DialogContent,
@@ -83,6 +84,7 @@ const OPERATOR_OPTIONS = [
 ]
 const USER_PROGRAM_OPTIONS = ['IUT', 'FUT', '内测', '体验']
 const IDH_VENDOR_OPTIONS = ['麦博', '驰腾', '传佳音', '英卡', '其他']
+const PIPELINE_OPTIONS = ['冒烟', '全部', '无']
 const SUPPORT_SIM_OPTIONS = ['Yes', 'No'] as const
 
 const emptyMilestoneRates = (): MilestoneRatesForm => ({
@@ -243,26 +245,26 @@ export function ParamsPage() {
   }
 
   const autoIdentifyRefProjects = () => {
-    const target = params.newProjectName.trim().toLowerCase()
-    const byScore = allProjects
-      .map((name) => {
-        const normalized = name.toLowerCase()
-        const overlap = normalized
-          .split(/\s+/)
-          .filter(Boolean)
-          .filter((token) => target.includes(token)).length
-        const base = overlap * 18 + (normalized[0] === target[0] ? 12 : 0)
-        const score = Math.max(40, Math.min(96, base + (name.length % 11)))
-        return { project: name, similarity: score, source: '系统识别' }
+    void services.projectService
+      .listCachedProjects()
+      .then((projects) => {
+        const byScore = findTopSimilarProjects(defectInputFromParams(params), projects, 3).map(
+          ({ project, score }) => ({
+            project: project.name,
+            similarity: Math.round(score * 100),
+            source: '系统识别',
+          }),
+        )
+        if (!byScore.length) {
+          toast('暂无可识别项目', { description: '请先在项目库中准备缓存项目' })
+          return
+        }
+        useForecastStore.getState().setRefProjects(byScore)
+        toast('已识别相似项目', { description: `已更新 ${byScore.length} 条参考项目` })
       })
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 4)
-    if (!byScore.length) {
-      toast('暂无可识别项目', { description: '请先在项目库中准备缓存项目' })
-      return
-    }
-    useForecastStore.getState().setRefProjects(byScore)
-    toast('已识别相似项目', { description: `已更新 ${byScore.length} 条参考项目` })
+      .catch((e: unknown) => {
+        toast('识别失败', { description: e instanceof Error ? e.message : '历史项目读取失败' })
+      })
   }
 
   return (
@@ -274,11 +276,19 @@ export function ParamsPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card className="rounded-2xl xl:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle>基础参数</CardTitle>
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="text-lg font-semibold">新项目信息</h3>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-2xl px-6"
+              onClick={autoIdentifyRefProjects}
+            >
+              <Search className="mr-2 h-4 w-4" />
+              自动识别
+            </Button>
               <Button
                 type="button"
                 className="rounded-2xl px-6"
@@ -287,39 +297,61 @@ export function ParamsPage() {
                 <Sparkles className="mr-2 h-4 w-4" />
                 开始预测
               </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <Label>新项目名称</Label>
-                <Input
-                  value={params.newProjectName}
-                  onChange={(e) => setParams({ newProjectName: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>开始周期</Label>
-                <Input
-                  value={params.startWeek}
-                  onChange={(e) => setParams({ startWeek: e.target.value })}
-                  placeholder="例如 26W2"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>结束周期</Label>
-                <Input
-                  value={params.endWeek}
-                  onChange={(e) => setParams({ endWeek: e.target.value })}
-                  placeholder="例如 26W27"
-                />
-              </div>
-            </div>
+          </div>
+        </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div className="space-y-4">
-                <div className="text-sm font-medium text-slate-700">项目基础信息</div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>项目基础信息</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>新项目名称</Label>
+                    <Input
+                      value={params.newProjectName}
+                      onChange={(e) => setParams({ newProjectName: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>开始时间</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={params.startWeek}
+                        onChange={(e) => setParams({ startWeek: e.target.value })}
+                        placeholder="例如 26W2"
+                      />
+                      <Input
+                        type="date"
+                        className="w-[9.5rem] shrink-0 rounded-xl"
+                        value={milestoneWeekToMondayIso(params.startWeek)}
+                        onChange={(e) => {
+                          const week = milestoneMondayIsoToWeekLabel(e.target.value)
+                          if (week) setParams({ startWeek: week })
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>结束时间</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={params.endWeek}
+                        onChange={(e) => setParams({ endWeek: e.target.value })}
+                        placeholder="例如 26W27"
+                      />
+                      <Input
+                        type="date"
+                        className="w-[9.5rem] shrink-0 rounded-xl"
+                        value={milestoneWeekToMondayIso(params.endWeek)}
+                        onChange={(e) => {
+                          const week = milestoneMondayIsoToWeekLabel(e.target.value)
+                          if (week) setParams({ endWeek: week })
+                        }}
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label>项目类别</Label>
                     <Select
@@ -387,10 +419,14 @@ export function ParamsPage() {
                     </Select>
                   </div>
                 </div>
-              </div>
+              </CardContent>
+            </Card>
 
-              <div className="space-y-4">
-                <div className="text-sm font-medium text-slate-700">技术变量</div>
+            <Card className="rounded-2xl">
+              <CardHeader>
+                <CardTitle>技术变量</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>芯片状态</Label>
@@ -403,6 +439,24 @@ export function ParamsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         {CHIPSET_STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>流水线</Label>
+                    <Select
+                      value={params.pipeline}
+                      onValueChange={(v) => setParams({ pipeline: v ?? params.pipeline })}
+                    >
+                      <SelectTrigger className="w-full rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PIPELINE_OPTIONS.map((option) => (
                           <SelectItem key={option} value={option}>
                             {option}
                           </SelectItem>
@@ -498,60 +552,29 @@ export function ParamsPage() {
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
+      </div>
 
-        <Card className="rounded-2xl">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
+        <Card className="rounded-2xl xl:col-span-3">
           <CardHeader>
-            <CardTitle>系统建议</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div className="flex items-center justify-between">
-              <span>自动识别相似项目</span>
-              <Badge>可执行</Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>建议目标总量</span>
-              <Badge variant="secondary">890 ~ 940</Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>团队拆分方式</span>
-              <Badge variant="secondary">开发 / 测试两大类</Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>节点信息</span>
-              <Badge variant="outline">按项目单独维护</Badge>
-            </div>
-            <div className="flex gap-3 pt-2">
-              <Button
-                type="button"
-                className="w-full rounded-2xl"
-                onClick={autoIdentifyRefProjects}
-              >
-                <Search className="mr-2 h-4 w-4" />
-                自动识别
-              </Button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>参考项目</CardTitle>
+                <CardDescription>可以自动识别，也可以完全手工添加/删除</CardDescription>
+              </div>
               <Button
                 type="button"
                 variant="outline"
-                className="w-full rounded-2xl"
+                className="rounded-2xl"
                 onClick={() => setIsAddRefOpen(true)}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 手工添加
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
-        <Card className="rounded-2xl xl:col-span-3">
-          <CardHeader>
-            <CardTitle>参考项目</CardTitle>
-            <CardDescription>可以自动识别，也可以完全手工添加/删除</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>

@@ -1001,16 +1001,43 @@ def ensure_seed_data() -> None:
                 )
 
 
+def _project_summary_from_row(row: sqlite3.Row) -> ProjectSummary:
+    data = dict(row)
+    data["operators"] = json.loads(data.pop("operatorsJson") or "[]")
+    data["userPrograms"] = json.loads(data.pop("userProgramsJson") or "[]")
+    return ProjectSummary(**data)
+
+
 def list_project_summaries() -> list[ProjectSummary]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT name, display_name as displayName, cycle, defects, teams, similarity
+            SELECT
+              name,
+              display_name as displayName,
+              cycle,
+              defects,
+              teams,
+              similarity,
+              project_category as projectCategory,
+              region,
+              os,
+              device_type as deviceType,
+              chipset_status as chipsetStatus,
+              pipeline,
+              operators_json as operatorsJson,
+              user_programs_json as userProgramsJson,
+              idh_vendor as idhVendor,
+              fr_quantity as frQuantity,
+              mm,
+              support_sim as supportSim,
+              valid_start_date as validStartDate,
+              valid_end_date as validEndDate
             FROM project_summary
             ORDER BY name
             """
         ).fetchall()
-    return [ProjectSummary(**dict(r)) for r in rows]
+    return [_project_summary_from_row(r) for r in rows]
 
 
 def _zero_weekly_for_cycle(cycle: str) -> list[WeeklyPoint]:
@@ -1065,7 +1092,27 @@ def get_project_history(project_name: str) -> ProjectHistory:
     with get_conn() as conn:
         summary = conn.execute(
             """
-            SELECT name, display_name as displayName, cycle, defects, teams, similarity
+            SELECT
+              name,
+              display_name as displayName,
+              cycle,
+              defects,
+              teams,
+              similarity,
+              project_category as projectCategory,
+              region,
+              os,
+              device_type as deviceType,
+              chipset_status as chipsetStatus,
+              pipeline,
+              operators_json as operatorsJson,
+              user_programs_json as userProgramsJson,
+              idh_vendor as idhVendor,
+              fr_quantity as frQuantity,
+              mm,
+              support_sim as supportSim,
+              valid_start_date as validStartDate,
+              valid_end_date as validEndDate
             FROM project_summary
             WHERE name = ?
             """,
@@ -1112,8 +1159,9 @@ def get_project_history(project_name: str) -> ProjectHistory:
         ordered_labels = [row.weekLabel for row in weekly]
         created_team_rows = _team_week_map_to_rows(created_map, ordered_labels, created_issue_keys_map)
         fixed_team_rows = _team_week_map_to_rows(fixed_map, ordered_labels, fixed_issue_keys_map)
+    summary_model = _project_summary_from_row(summary)
     return ProjectHistory(
-        **dict(summary),
+        **summary_model.model_dump(),
         weekly=weekly,
         createdTeams=created_team_rows,
         fixedTeams=fixed_team_rows,
@@ -1165,17 +1213,71 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
 
 
 def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> None:
+    normalized_source = "jira" if source == "jira" else "manual"
+    metadata_values = (
+        (project.projectCategory or "").strip() or None,
+        (project.region or "").strip() or None,
+        (project.os or "").strip() or None,
+        (project.deviceType or "").strip() or None,
+        (project.chipsetStatus or "").strip() or None,
+        (project.pipeline or "").strip() or None,
+        json.dumps(project.operators, ensure_ascii=False),
+        json.dumps(project.userPrograms, ensure_ascii=False),
+        (project.idhVendor or "").strip() or None,
+        project.frQuantity,
+        project.mm,
+        project.supportSim,
+        (project.validStartDate or "").strip() or None,
+        (project.validEndDate or "").strip() or None,
+    )
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO project_summary(name, display_name, cycle, defects, teams, similarity, source, updated_at)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO project_summary(
+              name,
+              display_name,
+              cycle,
+              defects,
+              teams,
+              similarity,
+              project_category,
+              region,
+              os,
+              device_type,
+              chipset_status,
+              pipeline,
+              operators_json,
+              user_programs_json,
+              idh_vendor,
+              fr_quantity,
+              mm,
+              support_sim,
+              valid_start_date,
+              valid_end_date,
+              source,
+              updated_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(name) DO UPDATE SET
-              display_name = excluded.display_name,
+              display_name = CASE WHEN excluded.source = 'jira' AND excluded.display_name = '' THEN project_summary.display_name ELSE excluded.display_name END,
               cycle = excluded.cycle,
               defects = excluded.defects,
               teams = excluded.teams,
               similarity = excluded.similarity,
+              project_category = CASE WHEN excluded.source = 'jira' THEN project_summary.project_category ELSE excluded.project_category END,
+              region = CASE WHEN excluded.source = 'jira' THEN project_summary.region ELSE excluded.region END,
+              os = CASE WHEN excluded.source = 'jira' THEN project_summary.os ELSE excluded.os END,
+              device_type = CASE WHEN excluded.source = 'jira' THEN project_summary.device_type ELSE excluded.device_type END,
+              chipset_status = CASE WHEN excluded.source = 'jira' THEN project_summary.chipset_status ELSE excluded.chipset_status END,
+              pipeline = CASE WHEN excluded.source = 'jira' THEN project_summary.pipeline ELSE excluded.pipeline END,
+              operators_json = CASE WHEN excluded.source = 'jira' THEN project_summary.operators_json ELSE excluded.operators_json END,
+              user_programs_json = CASE WHEN excluded.source = 'jira' THEN project_summary.user_programs_json ELSE excluded.user_programs_json END,
+              idh_vendor = CASE WHEN excluded.source = 'jira' THEN project_summary.idh_vendor ELSE excluded.idh_vendor END,
+              fr_quantity = CASE WHEN excluded.source = 'jira' THEN project_summary.fr_quantity ELSE excluded.fr_quantity END,
+              mm = CASE WHEN excluded.source = 'jira' THEN project_summary.mm ELSE excluded.mm END,
+              support_sim = CASE WHEN excluded.source = 'jira' THEN project_summary.support_sim ELSE excluded.support_sim END,
+              valid_start_date = CASE WHEN excluded.source = 'jira' THEN project_summary.valid_start_date ELSE excluded.valid_start_date END,
+              valid_end_date = CASE WHEN excluded.source = 'jira' THEN project_summary.valid_end_date ELSE excluded.valid_end_date END,
               source = excluded.source,
               updated_at = excluded.updated_at
             """,
@@ -1186,7 +1288,8 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
                 project.defects,
                 project.teams,
                 project.similarity,
-                source,
+                *metadata_values,
+                normalized_source,
                 datetime.utcnow().isoformat(),
             ),
         )
