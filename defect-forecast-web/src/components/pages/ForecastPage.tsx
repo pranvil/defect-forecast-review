@@ -1,10 +1,16 @@
-import { Database, Download, FileSpreadsheet, History, Sparkles, Trash2, Wand2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  Database,
+  FileSpreadsheet,
+  History,
+  Sparkles,
+  Trash2,
+  Wand2,
+} from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
 import {
   Area,
-  Bar,
-  BarChart,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -35,64 +41,28 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useForecastStore } from '@/stores/forecastStore'
-import { useTeamStore } from '@/stores/teamStore'
-import type { ForecastResult } from '@/services/forecastService'
+import type { ForecastResult, ForecastVersionRow } from '@/services/forecastService'
 import { isReviewMode } from '@/runtime/mode'
 
 export function ForecastPage() {
   const params = useForecastStore((s) => s.params)
-  const refProjects = useForecastStore((s) => s.refProjects)
-  const milestones = useForecastStore((s) => s.milestones)
-  const teams = useTeamStore((s) => s.teams)
-
-  const enabledTestingTeams = React.useMemo(() => {
-    return teams.filter((t) => t.type === 'testing').map((t) => t.name)
-  }, [teams])
-
-  const enabledDevTeams = React.useMemo(() => {
-    return teams
-      .filter((t) => t.type === 'development')
-      .map((t) => t.name)
-  }, [teams])
-
   const [result, setResult] = React.useState<ForecastResult | null>(null)
   const [error, setError] = React.useState('')
-  const [versions, setVersions] = React.useState<{ id: string; createdAt: string; note: string; cycle: string }[]>([])
+  const [versions, setVersions] = React.useState<ForecastVersionRow[]>([])
 
   const refreshVersions = React.useCallback(() => {
     return services.forecastService.listForecastVersions(params.newProjectName).then((rows) => {
-      setVersions(rows.map((x) => ({ id: x.id, createdAt: x.createdAt, note: x.note, cycle: x.cycle })))
+      setVersions(rows)
+      setResult((current) => current ?? rows.find((row) => row.result)?.result ?? null)
     })
   }, [params.newProjectName])
 
   React.useEffect(() => {
-    let cancelled = false
     setError('')
-    void services.forecastService
-      .getForecastResult({
-        params,
-        enabledTestingTeams,
-        enabledDevTeams,
-        milestones,
-        refProjects,
-      })
-      .then((r) => {
-        if (cancelled) return
-        setError('')
-        setResult(r)
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return
-        setResult(null)
-        setError(e instanceof Error ? e.message : '预测服务调用失败')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [params, enabledTestingTeams, enabledDevTeams, milestones, refProjects])
-
-  React.useEffect(() => {
-    void refreshVersions()
+    void refreshVersions().catch((e: unknown) => {
+      setResult(null)
+      setError(e instanceof Error ? e.message : '预测版本加载失败')
+    })
   }, [refreshVersions])
 
   if (error) {
@@ -111,14 +81,21 @@ export function ForecastPage() {
       <div className="space-y-6">
         <div>
           <h2 className="text-2xl font-semibold">预测结果</h2>
-          <p className="mt-1 text-sm text-slate-500">加载中...</p>
+          <p className="mt-1 text-sm text-slate-500">这里只展示在“新项目预测”页保存过的预测记录。</p>
         </div>
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle>预测版本记录</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-slate-500">
+            {versions.length ? '请选择一条有结果数据的版本。' : '暂无保存的预测结果。'}
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
   const dataset = result.dataset
-  const teamSummary = result.teamSummary
   const finalRow = dataset.weekly[dataset.weekly.length - 1]!
   const estimatedDefects = result.estimatedDefects ?? finalRow.cumCreated
 
@@ -127,41 +104,9 @@ export function ForecastPage() {
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div>
           <h2 className="text-2xl font-semibold">预测结果</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            点击“开始预测”后跳转到这里。结果页重点展示总量、趋势、开发/测试两大类拆分，以及按模板导出的 Excel 预览。
-          </p>
+          <p className="mt-1 text-sm text-slate-500">查看已保存的预测结果，可删除历史保存版本。</p>
         </div>
         <div className="flex gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-2xl"
-            onClick={() => {
-              if (!result) return
-              void services.forecastService
-                .saveForecastVersion({
-                  projectName: params.newProjectName,
-                  input: {
-                    params,
-                    enabledTestingTeams,
-                    enabledDevTeams,
-                    milestones,
-                    refProjects,
-                  },
-                  result,
-                })
-                .then((saved) => {
-                  toast('已保存预测版本', { description: `版本 ${saved.id.slice(0, 8)}` })
-                  return refreshVersions()
-                })
-                .catch((e: unknown) => {
-                  toast('保存失败', { description: e instanceof Error ? e.message : '服务调用失败' })
-                })
-            }}
-          >
-            <Download className="mr-2 h-4 w-4" />
-            保存预测记录
-          </Button>
           <Button
             type="button"
             className="rounded-2xl"
@@ -208,14 +153,32 @@ export function ForecastPage() {
         <Kpi title="最终 Backlog" value={finalRow.backlog} sub="累计创建 - 累计解决" icon={History} />
         <Kpi
           title="参考项目数"
-          value={result.referenceProjects?.length ?? refProjects.length}
+          value={result.referenceProjects?.length ?? 0}
           sub="相似度 Top 3 / 手工确认"
           icon={Wand2}
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
-        <Card className="rounded-2xl xl:col-span-3">
+      {!!result.warnings?.length && (
+        <Card className="rounded-2xl border-amber-200 bg-amber-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base text-amber-900">
+              <AlertTriangle className="h-4 w-4" />
+              预测约束提醒
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-amber-900">
+            {result.warnings.map((warning, index) => (
+              <div key={`${warning.type}-${warning.milestone ?? ''}-${index}`}>
+                {warning.message}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 gap-6">
+        <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
           </CardHeader>
@@ -255,24 +218,6 @@ export function ForecastPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl xl:col-span-2">
-          <CardHeader>
-            <CardTitle>开发 / 测试两大类拆分</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[340px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={teamSummary}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="group" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="created" fill="#0284c7" />
-                <Bar dataKey="fixed" fill="#16a34a" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       <Tabs defaultValue="weekly" className="w-full">
@@ -339,27 +284,44 @@ export function ForecastPage() {
                       <TableCell>{v.note || '-'}</TableCell>
                       <TableCell>{new Date(v.createdAt).toLocaleString()}</TableCell>
                       <TableCell>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-8 rounded-xl px-3"
-                          onClick={() => {
-                            void services.forecastService
-                              .deleteForecastVersion(v.id)
-                              .then(() => {
-                                toast('已删除版本')
-                                return refreshVersions()
-                              })
-                              .catch((e: unknown) => {
-                                toast('删除失败', {
-                                  description: e instanceof Error ? e.message : '服务调用失败',
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-8 rounded-xl px-3"
+                            onClick={() => {
+                              if (!v.result) {
+                                toast('该版本没有结果数据')
+                                return
+                              }
+                              setResult(v.result)
+                            }}
+                          >
+                            查看
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-8 rounded-xl px-3"
+                            onClick={() => {
+                              void services.forecastService
+                                .deleteForecastVersion(v.id)
+                                .then(() => {
+                                  toast('已删除版本')
+                                  setResult(null)
+                                  return refreshVersions()
                                 })
-                              })
-                          }}
-                        >
-                          <Trash2 className="mr-1 h-4 w-4" />
-                          删除
-                        </Button>
+                                .catch((e: unknown) => {
+                                  toast('删除失败', {
+                                    description: e instanceof Error ? e.message : '服务调用失败',
+                                  })
+                                })
+                            }}
+                          >
+                            <Trash2 className="mr-1 h-4 w-4" />
+                            删除
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -78,7 +78,7 @@ function splitTeamAliases(note: string): string[] {
 
 function buildTeamAliasMap(teams: TeamItem[]) {
   return teams.map((team) => {
-    const aliases = [team.name, ...splitTeamAliases(team.note)]
+    const aliases = [team.name, ...splitTeamAliases(team.note ?? '')]
     const normalizedAliases = new Set(aliases.map(normalizeTeamName).filter(Boolean))
     return { team: team.name, aliases, normalizedAliases }
   })
@@ -570,11 +570,9 @@ export function useHistoryPageData() {
     const displayName = window.prompt('请输入项目名称（可选，用于展示）', '') ?? ''
     const cycle = window.prompt('请输入周期（例如 26W2-26W27）', '26W2-26W27') ?? '26W2-26W27'
     const defectsRaw = window.prompt('请输入 Defect 总数', '0') ?? '0'
-    const teamsRaw = window.prompt('请输入团队数', '1') ?? '1'
     const defects = Number.parseInt(defectsRaw, 10)
-    const teams = Number.parseInt(teamsRaw, 10)
-    if (!Number.isFinite(defects) || defects < 0 || !Number.isFinite(teams) || teams <= 0) {
-      toast('新增失败', { description: 'Defect 和团队数必须是有效数字' })
+    if (!Number.isFinite(defects) || defects < 0) {
+      toast('新增失败', { description: 'Defect 必须是有效数字' })
       return
     }
     try {
@@ -584,7 +582,7 @@ export function useHistoryPageData() {
           displayName: displayName.trim() ? displayName.trim() : undefined,
           cycle: cycle.trim() || '26W2-26W27',
           defects,
-          teams,
+          teams: 1,
         },
       ])
       await refreshProjects()

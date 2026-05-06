@@ -20,9 +20,9 @@ export const forecastFixedTeams: ForecastTeamRow[] = [
   { team: '运营商应用开发部', group: '开发团队', values: [0,0,1,8,14,18,21,24,22,19,18,15,12,10,8,6,5,4,3,2,1,1,1,1,1,1] },
 ]
 
-export const forecastResultMilestones: MilestoneLabel[] = initialMilestones.map(
-  (m) => ({
+export const forecastResultMilestones: MilestoneLabel[] = initialMilestones
+  .filter((m) => m.week.trim())
+  .map((m) => ({
     label: m.name,
     week: m.week.replace('26', ''),
-  }),
-)
+  }))

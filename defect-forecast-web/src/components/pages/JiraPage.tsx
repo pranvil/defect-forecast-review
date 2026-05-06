@@ -31,6 +31,27 @@ import { toBusinessWeekLabel } from '@/utils/week'
 const JIRA_FETCH_FORM_KEY = 'drp.jira.fetch.form.v1'
 const JIRA_FETCH_LAST_RESULT_KEY = 'drp.jira.fetch.last-result.v1'
 const DEFAULT_PROJECT_KEY = 'MNTNPOM'
+const LEGACY_DEFAULT_JQL =
+  `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))\nAND created >= 2026-01-01\nAND created < 2026-07-01`
+
+function buildIssueFetchJql(projectKey: string): string {
+  const key = projectKey.trim().toUpperCase() || DEFAULT_PROJECT_KEY
+  return `project = ${key}\nAND issuetype in (defect, bug)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))`
+}
+
+function isGeneratedIssueFetchJql(jql: string, projectKey: string): boolean {
+  return jql.trim() === buildIssueFetchJql(projectKey).trim()
+}
+
+function isLegacyBoundedIssueFetchJql(jql: string): boolean {
+  const compact = jql.replace(/\s+/g, ' ').trim()
+  return /^project\s*=\s*("?)[A-Za-z][A-Za-z0-9_]*\1\s+AND\s+issuetype\s+in\s*\(\s*defect\s*,\s*bug\s*\)\s+AND\s+created\s*>=\s*['"]?\d{4}-\d{2}-\d{2}['"]?\s+AND\s+created\s*(?:<=|<)\s*['"]?\d{4}-\d{2}-\d{2}['"]?$/i.test(compact)
+}
+
+function isLegacySimpleIssueFetchJql(jql: string): boolean {
+  const compact = jql.replace(/\s+/g, ' ').trim()
+  return /^project\s*=\s*("?)[A-Za-z][A-Za-z0-9_]*\1\s+AND\s+issuetype\s+in\s*\(\s*defect\s*,\s*bug\s*\)$/i.test(compact)
+}
 
 type JiraPageProps = {
   embedded?: boolean
@@ -44,12 +65,11 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
   const [pullMode, setPullMode] = React.useState<'jql' | 'projectStart'>('jql')
   const [startDate, setStartDate] = React.useState('2026-01-01')
   const [endDate, setEndDate] = React.useState('2026-06-30')
-  const [jql, setJql] = React.useState(
-    `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))\nAND created >= 2026-01-01\nAND created < 2026-07-01`,
-  )
+  const [jql, setJql] = React.useState(() => buildIssueFetchJql(DEFAULT_PROJECT_KEY))
   const [isFetching, setIsFetching] = React.useState(false)
   const [lastResult, setLastResult] = React.useState<JiraFetchResult | null>(null)
   const [isFormHydrated, setIsFormHydrated] = React.useState(false)
+  const shouldSyncJqlWithProjectKey = React.useRef(true)
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const openProjectDetail = useProjectStore((s) => s.openProjectDetail)
   const openProjectHub = useProjectStore((s) => s.openProjectHub)
@@ -72,12 +92,14 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
         endDate?: unknown
         jql?: unknown
       }
+      const nextProjectKey =
+        typeof parsed.projectKey === 'string' && parsed.projectKey.trim()
+          ? parsed.projectKey.trim()
+          : DEFAULT_PROJECT_KEY
       if (parsed.pullMode === 'jql' || parsed.pullMode === 'projectStart') {
         setPullMode(parsed.pullMode)
       }
-      if (typeof parsed.projectKey === 'string' && parsed.projectKey.trim()) {
-        setProjectKey(parsed.projectKey.trim())
-      }
+      setProjectKey(nextProjectKey)
       if (typeof parsed.projectDisplayName === 'string') {
         setProjectDisplayName(parsed.projectDisplayName)
       }
@@ -88,7 +110,13 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
         setEndDate(parsed.endDate)
       }
       if (typeof parsed.jql === 'string') {
-        setJql(parsed.jql)
+        const isLegacyGeneratedJql =
+          parsed.jql.trim() === LEGACY_DEFAULT_JQL.trim() ||
+          isLegacyBoundedIssueFetchJql(parsed.jql) ||
+          isLegacySimpleIssueFetchJql(parsed.jql)
+        const savedJql = isLegacyGeneratedJql ? buildIssueFetchJql(nextProjectKey) : parsed.jql
+        setJql(savedJql)
+        shouldSyncJqlWithProjectKey.current = isLegacyGeneratedJql || isGeneratedIssueFetchJql(savedJql, nextProjectKey)
       }
     } catch {
       // ignore malformed local cache
@@ -96,6 +124,11 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
       setIsFormHydrated(true)
     }
   }, [])
+
+  React.useEffect(() => {
+    if (!isFormHydrated || !shouldSyncJqlWithProjectKey.current) return
+    setJql(buildIssueFetchJql(projectKey))
+  }, [isFormHydrated, projectKey])
 
   React.useEffect(() => {
     try {
@@ -426,7 +459,10 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
                       <textarea
                         className="min-h-[140px] w-full rounded-2xl border bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-slate-300"
                         value={jql}
-                        onChange={(e) => setJql(e.target.value)}
+                        onChange={(e) => {
+                          shouldSyncJqlWithProjectKey.current = false
+                          setJql(e.target.value)
+                        }}
                       />
                     </div>
                     {jqlParsedProjectKey ? (
@@ -569,7 +605,6 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
                 <TableHead>项目 Key</TableHead>
                 <TableHead>周期</TableHead>
                 <TableHead>Defect 数</TableHead>
-                <TableHead>团队数</TableHead>
                 <TableHead>状态</TableHead>
               </TableRow>
             </TableHeader>
@@ -594,7 +629,6 @@ export function JiraPage({ embedded = false }: JiraPageProps) {
                   </TableCell>
                   <TableCell>{p.cycle}</TableCell>
                   <TableCell>{p.defects}</TableCell>
-                  <TableCell>{p.teams}</TableCell>
                   <TableCell>
                     <Badge variant="outline">已缓存</Badge>
                   </TableCell>

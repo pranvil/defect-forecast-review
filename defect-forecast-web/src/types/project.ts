@@ -18,6 +18,9 @@ export interface TeamWeeklyRow {
 export interface MilestoneLabel {
   label: string
   week: string
+  devResolutionRate?: number | null
+  testCompletionRate?: number | null
+  testSubmissionRate?: number | null
 }
 
 export interface ProjectHistory {

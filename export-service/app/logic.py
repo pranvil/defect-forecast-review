@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 from datetime import date, datetime, timedelta
 import json
+import math
 import re
+from statistics import NormalDist
 from typing import Iterable
 from uuid import uuid4
 
@@ -19,6 +21,7 @@ from app.models import (
     ForecastInput,
     ForecastParams,
     ForecastResult,
+    ForecastWarning,
     ForecastVersionRow,
     JiraFetchRequest,
     JiraFetchResult,
@@ -167,12 +170,56 @@ DEFAULT_FORECAST_DEFAULTS = ForecastDefaults(
         RefProjectRow(project="Goldfinch TMO", similarity=79, source="手工添加"),
     ],
     milestones=[
-        MilestoneParam(name="FC checklist", week="26W4", date="2026-01-19"),
-        MilestoneParam(name="M1-1", week="26W5", date="2026-01-26"),
-        MilestoneParam(name="M1-2", week="26W6", date="2026-02-02"),
-        MilestoneParam(name="M1-3", week="26W7", date="2026-02-09"),
-        MilestoneParam(name="V1", week="26W17", date="2026-04-20"),
-        MilestoneParam(name="V4", week="26W23", date="2026-06-01"),
+        MilestoneParam(name="M1-1", week="", date=""),
+        MilestoneParam(name="M1-2", week="", date=""),
+        MilestoneParam(name="M1-3", week="", date=""),
+        MilestoneParam(
+            name="M1-4",
+            week="",
+            date="",
+            devResolutionRate=50,
+            testCompletionRate=25,
+            testSubmissionRate=30,
+        ),
+        MilestoneParam(name="M1-5", week="", date=""),
+        MilestoneParam(name="M1-6", week="", date=""),
+        MilestoneParam(name="M1-7", week="", date=""),
+        MilestoneParam(
+            name="M1-8",
+            week="",
+            date="",
+            devResolutionRate=65,
+            testCompletionRate=50,
+            testSubmissionRate=50,
+        ),
+        MilestoneParam(name="M1-9", week="", date=""),
+        MilestoneParam(name="M1-10", week="", date=""),
+        MilestoneParam(name="M1-11", week="", date=""),
+        MilestoneParam(name="M1-12", week="", date=""),
+        MilestoneParam(
+            name="M2-1",
+            week="",
+            date="",
+            devResolutionRate=80,
+            testCompletionRate=75,
+            testSubmissionRate=70,
+        ),
+        MilestoneParam(name="M2-2", week="", date=""),
+        MilestoneParam(name="M2-3", week="", date=""),
+        MilestoneParam(name="M2-4", week="", date=""),
+        MilestoneParam(name="M3", week="", date=""),
+        MilestoneParam(
+            name="M4",
+            week="",
+            date="",
+            devResolutionRate=93,
+            testCompletionRate=98,
+            testSubmissionRate=85,
+        ),
+        MilestoneParam(name="M5-1", week="", date="", testCompletionRate=100),
+        MilestoneParam(name="M5-2", week="", date="", testCompletionRate=100, testSubmissionRate=90),
+        MilestoneParam(name="V1", week="", date=""),
+        MilestoneParam(name="V2", week="", date=""),
     ],
     params=ForecastParams(newProjectName="Aurora NP TMO", startWeek="26W2", endWeek="26W27"),
 )
@@ -180,6 +227,15 @@ DEFAULT_FORECAST_DEFAULTS = ForecastDefaults(
 DEFAULT_COMPARE_COLORS = CompareColorsConfig(
     colors=["#0f172a", "#0284c7", "#16a34a", "#f59e0b", "#7c3aed"]
 )
+
+LEGACY_INITIAL_MILESTONES = [
+    ("FC checklist", "26W4", "2026-01-19"),
+    ("M1-1", "26W5", "2026-01-26"),
+    ("M1-2", "26W6", "2026-02-02"),
+    ("M1-3", "26W7", "2026-02-09"),
+    ("V1", "26W17", "2026-04-20"),
+    ("V4", "26W23", "2026-06-01"),
+]
 
 TESTING_TEAM_UNKNOWN = "测试未知团队"
 DEV_TEAM_UNKNOWN = "软件-未知团队"
@@ -1377,6 +1433,334 @@ def delete_cached_project(project_name: str) -> bool:
     return True
 
 
+FORECAST_CONFLICT_THRESHOLD_PERCENT = 12
+
+
+def _round_to_total(raw: list[float], target_total: int) -> list[int]:
+    values = [max(0, math.floor(v)) for v in raw]
+    remainder = target_total - sum(values)
+    order = sorted(range(len(raw)), key=lambda idx: raw[idx] - math.floor(raw[idx]), reverse=True)
+    for idx in order[: max(0, remainder)]:
+        values[idx] += 1
+    return values
+
+
+def _week_index(weekly: list[WeeklyPoint], week: str) -> int:
+    normalized = week.strip()
+    if not normalized:
+        return -1
+    short = re.sub(r"^26", "", normalized, flags=re.IGNORECASE)
+    for idx, row in enumerate(weekly):
+        if row.weekLabel == normalized or row.week == short:
+            return idx
+    return -1
+
+
+def _collect_rate_constraints(
+    weekly: list[WeeklyPoint],
+    milestones: list[MilestoneParam],
+    metric: str,
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for milestone in milestones:
+        rate = getattr(milestone, metric)
+        index = _week_index(weekly, milestone.week)
+        if index < 0 or rate is None:
+            continue
+        index = max(0, index - 1)
+        out.append(
+            {
+                "milestone": milestone.name,
+                "week": milestone.week,
+                "index": index,
+                "rate": max(0.0, min(100.0, float(rate))),
+                "metric": metric,
+            }
+        )
+    return sorted(out, key=lambda x: int(x["index"]))
+
+
+def _infer_peak_index(length: int, constraints: list[dict[str, object]]) -> float:
+    if not constraints:
+        return (length - 1) / 2
+    sigma = max(1.5, length / 5)
+    normal = NormalDist()
+    estimates = [
+        int(c["index"]) - sigma * normal.inv_cdf(max(0.001, min(0.999, float(c["rate"]) / 100)))
+        for c in constraints
+    ]
+    return max(0.0, min(length - 1, sum(estimates) / len(estimates)))
+
+
+def _gaussian_weights(length: int, peak_index: float) -> list[float]:
+    sigma = max(1.5, length / 5)
+    return [math.exp(-0.5 * ((idx - peak_index) / sigma) ** 2) for idx in range(length)]
+
+
+def _cumulative(values: list[int | float]) -> list[float]:
+    total = 0.0
+    out: list[float] = []
+    for value in values:
+        total += float(value)
+        out.append(total)
+    return out
+
+
+def _suggested_week_for_rate(weekly: list[WeeklyPoint], cdf: list[float], rate: float) -> str:
+    target = rate / 100
+    if not cdf:
+        return ""
+    idx = min(range(len(cdf)), key=lambda i: abs(cdf[i] - target))
+    return weekly[idx].weekLabel if idx < len(weekly) else ""
+
+
+def _constraint_warnings(
+    weekly: list[WeeklyPoint],
+    constraints: list[dict[str, object]],
+    weights: list[float],
+    denominator_by_index: list[int] | None = None,
+) -> list[ForecastWarning]:
+    total = sum(weights) or 1
+    cdf = [v / total for v in _cumulative(weights)]
+    out: list[ForecastWarning] = []
+    for c in constraints:
+        idx = int(c["index"])
+        rate = float(c["rate"])
+        denominator = denominator_by_index[idx] if denominator_by_index and idx < len(denominator_by_index) else 0
+        if denominator:
+            final_denominator = denominator_by_index[-1] if denominator_by_index else denominator
+            suggested_rate = round(((cdf[idx] if idx < len(cdf) else 0) * final_denominator / denominator) * 100)
+        else:
+            suggested_rate = round((cdf[idx] if idx < len(cdf) else 0) * 100)
+        delta = abs(suggested_rate - rate)
+        if delta <= FORECAST_CONFLICT_THRESHOLD_PERCENT:
+            continue
+        metric = str(c["metric"])
+        metric_label = "测试提交率" if metric == "testSubmissionRate" else "开发解决率"
+        suggested_week = _suggested_week_for_rate(weekly, cdf, rate)
+        milestone = str(c["milestone"])
+        week = str(c["week"])
+        out.append(
+            ForecastWarning(
+                type="milestone_conflict",
+                severity="warning",
+                milestone=milestone,
+                metric=metric,  # type: ignore[arg-type]
+                currentRate=rate,
+                suggestedRate=suggested_rate,
+                currentWeek=week,
+                suggestedWeek=suggested_week,
+                message=f"{milestone} 的{metric_label} {rate:g}% 与钟形分布偏离 {round(delta)} 个百分点，建议指标调整到 {suggested_rate}% 或将节点周期调整到 {suggested_week}",
+            )
+        )
+    return out
+
+
+def _distribute_by_constraints(
+    total: int,
+    weights: list[float],
+    constraints: list[dict[str, object]],
+    max_cum_by_index: list[float] | None = None,
+    warnings: list[ForecastWarning] | None = None,
+) -> list[int]:
+    length = len(weights)
+    values = [0 for _ in range(length)]
+    prev_index = -1
+    prev_cum = 0
+    points_by_index: dict[int, int] = {}
+    for c in constraints:
+        idx = int(c["index"])
+        requested_cum = int(c.get("targetCum", round(total * float(c["rate"]) / 100)))
+        capped_cum = min(requested_cum, int(max_cum_by_index[idx])) if max_cum_by_index else requested_cum
+        if warnings is not None and capped_cum < requested_cum:
+            suggested_rate = round(capped_cum / max(1, total) * 100)
+            milestone = str(c["milestone"])
+            rate = float(c["rate"])
+            warnings.append(
+                ForecastWarning(
+                    type="milestone_conflict",
+                    severity="warning",
+                    milestone=milestone,
+                    metric=c["metric"],  # type: ignore[arg-type]
+                    currentRate=rate,
+                    suggestedRate=suggested_rate,
+                    currentWeek=str(c["week"]),
+                    message=f"{milestone} 的开发解决率 {rate:g}% 会让 Backlog 过低，已按保留合理 Backlog 的上限 {suggested_rate}% 计算。",
+                )
+            )
+        points_by_index[idx] = max(points_by_index.get(idx, 0), capped_cum)
+    points_by_index[length - 1] = total
+    points = [{"index": index, "cum": cum} for index, cum in points_by_index.items()]
+    for point in sorted(points, key=lambda x: int(x["index"])):
+        end = min(length - 1, max(prev_index + 1, int(point["index"])))
+        target_cum = max(prev_cum, min(total, int(point["cum"])))
+        amount = target_cum - prev_cum
+        span = list(range(prev_index + 1, end + 1))
+        span_weights = [weights[idx] for idx in span]
+        total_weight = sum(span_weights) or len(span) or 1
+        rounded = _round_to_total([amount * w / total_weight for w in span_weights], amount)
+        for idx, value in zip(span, rounded):
+            values[idx] = value
+        prev_index = end
+        prev_cum = target_cum
+    return values
+
+
+def _enforce_fixed_availability(fixed: list[int], created: list[int]) -> list[int]:
+    out = fixed[:]
+    created_cum = _cumulative(created)
+    fixed_cum = 0
+    carry = 0
+    for idx, value in enumerate(out):
+        desired = value + carry
+        available = max(0, int(created_cum[idx]) - fixed_cum)
+        out[idx] = min(desired, available)
+        fixed_cum += out[idx]
+        carry = desired - out[idx]
+    return out
+
+
+def _backlog_reserve_by_index(total: int, length: int) -> list[int]:
+    if length <= 1 or total <= 0:
+        return [0 for _ in range(length)]
+    peak_reserve = max(1, round(total * 0.1))
+    return [
+        0 if idx == 0 or idx == length - 1 else round(peak_reserve * math.sin(math.pi * idx / (length - 1)))
+        for idx in range(length)
+    ]
+
+
+def _build_forecast_weekly_distribution(
+    base_weekly: list[WeeklyPoint],
+    milestones: list[MilestoneParam],
+    total_defects: int,
+) -> tuple[list[WeeklyPoint], list[ForecastWarning]]:
+    target = max(0, round(total_defects))
+    created_constraints = _collect_rate_constraints(base_weekly, milestones, "testSubmissionRate")
+    created_weights = _gaussian_weights(len(base_weekly), _infer_peak_index(len(base_weekly), created_constraints))
+    created = _distribute_by_constraints(target, created_weights, created_constraints)
+    fixed_constraints = _collect_rate_constraints(base_weekly, milestones, "devResolutionRate")
+    created_cum = _cumulative(created)
+    fixed_constraints_by_created = [
+        {
+            **constraint,
+            "targetCum": round((created_cum[int(constraint["index"])] if int(constraint["index"]) < len(created_cum) else 0) * float(constraint["rate"]) / 100),
+        }
+        for constraint in fixed_constraints
+    ]
+    reserve = _backlog_reserve_by_index(target, len(base_weekly))
+    fixed_max_cum = [
+        cum if idx == len(base_weekly) - 1 else max(0, cum - (reserve[idx] if idx < len(reserve) else 0))
+        for idx, cum in enumerate(created_cum)
+    ]
+    fixed_weights = [
+        (created[idx - 1] if idx > 0 else 0) + (created[idx - 2] if idx > 1 else 0) * 0.8 + 1
+        for idx in range(len(created))
+    ]
+    cap_warnings: list[ForecastWarning] = []
+    fixed = _enforce_fixed_availability(
+        _distribute_by_constraints(target, fixed_weights, fixed_constraints_by_created, fixed_max_cum, cap_warnings),
+        created,
+    )
+    weekly: list[WeeklyPoint] = []
+    cum_created = 0
+    cum_fixed = 0
+    for row, created_value, fixed_value in zip(base_weekly, created, fixed):
+        cum_created += created_value
+        cum_fixed += fixed_value
+        weekly.append(
+            WeeklyPoint(
+                week=row.week,
+                weekLabel=row.weekLabel,
+                date=row.date,
+                created=created_value,
+                fixed=fixed_value,
+                cumCreated=cum_created,
+                cumFixed=cum_fixed,
+                backlog=cum_created - cum_fixed,
+            )
+        )
+    warnings = _constraint_warnings(base_weekly, created_constraints, created_weights)
+    warnings.extend(_constraint_warnings(base_weekly, fixed_constraints_by_created, fixed_weights, created_cum))
+    warnings.extend(cap_warnings)
+    return weekly, warnings
+
+
+def _team_aliases(team: object) -> list[str]:
+    name = str(getattr(team, "name", "") or "").strip()
+    note = str(getattr(team, "note", "") or "")
+    aliases = [name]
+    aliases.extend(part.strip() for part in re.split(r"[，,;；]", note))
+    return [alias for alias in aliases if alias]
+
+
+def _resolve_aggregated_team(raw_team: str, team_configs: list[object]) -> str:
+    raw = raw_team.strip()
+    for team in team_configs:
+        if any(alias == raw or alias.endswith(f"-{raw}") or raw in alias for alias in _team_aliases(team)):
+            return str(getattr(team, "name", "") or raw).strip() or raw
+    return raw
+
+
+def _team_totals(histories: list[ProjectHistory], field: str, team_configs: list[object]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for history in histories:
+        rows = history.createdTeams if field == "createdTeams" else history.fixedTeams
+        for row in rows:
+            team = _resolve_aggregated_team(row.team, team_configs)
+            totals[team] = totals.get(team, 0) + sum(row.values)
+    return totals
+
+
+def _split_weekly_by_ratios(
+    teams: list[str],
+    weekly_values: list[int],
+    ratios: list[float],
+    group: str,
+) -> list[dict[str, object]]:
+    rows = [{"team": team, "group": group, "values": []} for team in teams]
+    for total in weekly_values:
+        values = _round_to_total([total * ratio for ratio in ratios], total)
+        for row, value in zip(rows, values):
+            row["values"].append(value)  # type: ignore[union-attr]
+    return rows
+
+
+def _allocate_teams_from_history(
+    histories: list[ProjectHistory],
+    testing_team_configs: list[object],
+    dev_team_configs: list[object],
+    testing_teams: list[str],
+    dev_teams: list[str],
+    weekly: list[WeeklyPoint],
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[ForecastWarning]]:
+    warnings: list[ForecastWarning] = []
+
+    def ratios_for(teams: list[str], field: str, team_configs: list[object], label: str) -> list[float]:
+        if not teams:
+            return []
+        totals = _team_totals(histories, field, team_configs)
+        selected_total = sum(totals.get(team, 0) for team in teams)
+        if selected_total <= 0:
+            warnings.append(
+                ForecastWarning(
+                    type="team_allocation",
+                    severity="warning",
+                    message=f"当前参考项目没有可用的{label}历史占比，已在当前勾选的 {len(teams)} 个{label}内均分，请确认是否接受该分配方式。",
+                )
+            )
+            return [1 / len(teams) for _ in teams]
+        return [totals.get(team, 0) / selected_total for team in teams]
+
+    created_ratios = ratios_for(testing_teams, "createdTeams", testing_team_configs, "测试团队")
+    fixed_ratios = ratios_for(dev_teams, "fixedTeams", dev_team_configs, "开发团队")
+    return (
+        _split_weekly_by_ratios(testing_teams, [row.created for row in weekly], created_ratios, "测试团队"),
+        _split_weekly_by_ratios(dev_teams, [row.fixed for row in weekly], fixed_ratios, "开发团队"),
+        warnings,
+    )
+
+
 def get_project_history(project_name: str) -> ProjectHistory:
     with get_conn() as conn:
         summary = conn.execute(
@@ -1462,31 +1846,52 @@ def get_project_history(project_name: str) -> ProjectHistory:
 
 def generate_forecast(input_data: ForecastInput) -> ForecastResult:
     estimated_defects, base_value, reference_projects, factors = _predict_defect_total(input_data)
+    effective_end_week = input_data.params.endWeek
+    for milestone in input_data.milestones:
+        week = milestone.week.strip()
+        if week and _parse_week_label(week) > _parse_week_label(effective_end_week):
+            effective_end_week = week
 
     seed_parts = [
         input_data.params.newProjectName,
         input_data.params.startWeek,
-        input_data.params.endWeek,
+        effective_end_week,
         str(estimated_defects),
     ]
     seed = "|".join(seed_parts)
-    weekly = _scale_weekly_created_total(
-        _make_weekly(seed, input_data.params.startWeek, input_data.params.endWeek),
+    weekly, warnings = _build_forecast_weekly_distribution(
+        _make_weekly(seed, input_data.params.startWeek, effective_end_week),
+        input_data.milestones,
         estimated_defects,
     )
 
-    created_teams = []
-    for team in input_data.enabledTestingTeams:
-        values = [max(0, int(row.created * (0.4 + (_hash_to_int(team) % 30) / 100))) for row in weekly]
-        created_teams.append({"team": team, "group": "测试团队", "values": values})
-    fixed_teams = []
-    for team in input_data.enabledDevTeams:
-        values = [max(0, int(row.fixed * (0.4 + (_hash_to_int(team) % 25) / 100))) for row in weekly]
-        fixed_teams.append({"team": team, "group": "开发团队", "values": values})
+    history_names = [row.project for row in input_data.refProjects] or [row.name for row in reference_projects]
+    histories: list[ProjectHistory] = []
+    for name in history_names:
+        try:
+            histories.append(get_project_history(name))
+        except Exception:
+            continue
+    created_teams, fixed_teams, team_warnings = _allocate_teams_from_history(
+        histories,
+        input_data.testingTeamConfigs or [team for team in list_teams() if team.type == "testing"],
+        input_data.devTeamConfigs or [team for team in list_teams() if team.type == "development"],
+        input_data.enabledTestingTeams,
+        input_data.enabledDevTeams,
+        weekly,
+    )
+    warnings.extend(team_warnings)
 
     milestones = [
-        MilestoneLabel(label=m.name, week=m.week.replace("26", "W") if m.week.startswith("26") else m.week)
+        MilestoneLabel(
+            label=m.name,
+            week=m.week.replace("26", "W") if m.week.startswith("26") else m.week,
+            devResolutionRate=m.devResolutionRate,
+            testCompletionRate=m.testCompletionRate,
+            testSubmissionRate=m.testSubmissionRate,
+        )
         for m in input_data.milestones
+        if m.week.strip()
     ]
     team_summary = [
         {
@@ -1512,6 +1917,7 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
         baseValue=base_value,
         referenceProjects=reference_projects,
         factors=factors,
+        warnings=warnings,
     )
 
 
@@ -1864,12 +2270,12 @@ def save_forecast_version(project_name: str, input_data: ForecastInput, result: 
             (version_id, project_name, cycle, note, json_dumps(input_data.model_dump()), json_dumps(result.model_dump()), created_at),
         )
     _replace_weekly(project_name, "forecast", result.dataset.weekly, version_id)
-    return ForecastVersionRow(id=version_id, projectName=project_name, cycle=cycle, note=note, createdAt=created_at)
+    return ForecastVersionRow(id=version_id, projectName=project_name, cycle=cycle, note=note, createdAt=created_at, result=result)
 
 
 def list_forecast_versions(project_name: str | None = None) -> list[ForecastVersionRow]:
     sql = """
-      SELECT id, project_name, cycle, note, created_at
+      SELECT id, project_name, cycle, note, created_at, result_json
       FROM forecast_version
       WHERE deleted_at IS NULL
     """
@@ -1887,6 +2293,7 @@ def list_forecast_versions(project_name: str | None = None) -> list[ForecastVers
             cycle=r["cycle"],
             note=r["note"],
             createdAt=r["created_at"],
+            result=ForecastResult(**json.loads(r["result_json"])) if r["result_json"] else None,
         )
         for r in rows
     ]
@@ -2058,7 +2465,14 @@ def get_forecast_defaults() -> ForecastDefaults:
         data = json.loads(raw)
         if not isinstance(data, dict):
             return DEFAULT_FORECAST_DEFAULTS
-        return ForecastDefaults(**data)
+        defaults = ForecastDefaults(**data)
+        legacy = [
+            (milestone.name, milestone.week, milestone.date)
+            for milestone in defaults.milestones
+        ]
+        if legacy == LEGACY_INITIAL_MILESTONES:
+            return defaults.model_copy(update={"milestones": DEFAULT_FORECAST_DEFAULTS.milestones})
+        return defaults
     except Exception:
         return DEFAULT_FORECAST_DEFAULTS
 

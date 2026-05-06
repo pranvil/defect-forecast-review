@@ -73,8 +73,8 @@ export function TeamsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>团队名称</TableHead>
-                  <TableHead>说明</TableHead>
+                  <TableHead>分类</TableHead>
+                  <TableHead>覆盖范围</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

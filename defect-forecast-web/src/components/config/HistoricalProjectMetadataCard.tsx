@@ -354,7 +354,7 @@ export function HistoricalProjectMetadataCard() {
           <div>
             <CardTitle>历史项目元数据</CardTitle>
             <CardDescription>
-              项目 Key 为主键；Jira 或导入结果负责统计 Defect、周期和团队数，项目参数在这里手工维护。
+              项目 Key 为主键；Jira 或导入结果负责统计 Defect 和周期，项目参数在这里手工维护。
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -702,12 +702,8 @@ export function HistoricalProjectMetadataCard() {
               <Label>Defects 总量</Label>
               <Input type="number" value={draft.defects} readOnly className="bg-slate-50 text-slate-500" />
             </div>
-            <div className="space-y-2">
-              <Label>团队数</Label>
-              <Input type="number" value={draft.teams} readOnly className="bg-slate-50 text-slate-500" />
-            </div>
             <p className="text-xs text-slate-500 md:col-span-3">
-              周期、Defects 总量和团队数来自 Jira 同步或导入统计；修改有效统计日期后，请重新同步该项目的 Jira 数据以刷新统计值。
+              周期和 Defects 总量来自 Jira 同步或导入统计；修改有效统计日期后，请重新同步该项目的 Jira 数据以刷新统计值。
             </p>
           </div>
           <DialogFooter>

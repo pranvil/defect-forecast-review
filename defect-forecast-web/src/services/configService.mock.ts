@@ -8,6 +8,14 @@ import type { FieldMapping } from '@/types/settings'
 
 const FIELD_KEY = 'defectForecast.fieldMappings.v1'
 const FORECAST_KEY = 'defectForecast.forecastDefaults.v1'
+const LEGACY_INITIAL_MILESTONES = [
+  { name: 'FC checklist', week: '26W4', date: '2026-01-19' },
+  { name: 'M1-1', week: '26W5', date: '2026-01-26' },
+  { name: 'M1-2', week: '26W6', date: '2026-02-02' },
+  { name: 'M1-3', week: '26W7', date: '2026-02-09' },
+  { name: 'V1', week: '26W17', date: '2026-04-20' },
+  { name: 'V4', week: '26W23', date: '2026-06-01' },
+]
 const DEFAULT_FORECAST_PARAMS: ForecastDefaultsPayload['params'] = {
   newProjectName: 'Aurora NP TMO',
   startWeek: '26W2',
@@ -56,6 +64,16 @@ function writeFieldMappings(rows: FieldMapping[]) {
   }
 }
 
+function isLegacyInitialMilestones(milestones: ForecastDefaultsPayload['milestones']): boolean {
+  return (
+    milestones.length === LEGACY_INITIAL_MILESTONES.length &&
+    milestones.every((m, index) => {
+      const legacy = LEGACY_INITIAL_MILESTONES[index]
+      return m.name === legacy.name && m.week === legacy.week && m.date === legacy.date
+    })
+  )
+}
+
 function readForecastDefaults(): ForecastDefaultsPayload {
   try {
     const raw = localStorage.getItem(FORECAST_KEY)
@@ -68,6 +86,9 @@ function readForecastDefaults(): ForecastDefaultsPayload {
     }
     const parsed = JSON.parse(raw) as ForecastDefaultsPayload
     if (!parsed || typeof parsed !== 'object') throw new Error('invalid')
+    if (isLegacyInitialMilestones(parsed.milestones ?? [])) {
+      return { ...parsed, milestones: initialMilestones }
+    }
     return parsed
   } catch {
     return {

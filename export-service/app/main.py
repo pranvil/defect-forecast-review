@@ -190,6 +190,8 @@ async def block_issue_batch(
     token: str = Form(...),
     verifySsl: bool = Form(True),
     timeoutSec: int = Form(10),
+    allowExistingMainCeaComment: bool = Form(False),
+    allowOtherStatuses: bool = Form(False),
 ) -> BlockIssueBatchResult:
     try:
         content = await file.read()
@@ -202,7 +204,12 @@ async def block_issue_batch(
             verifySsl=verifySsl,
             timeoutSec=timeoutSec,
         )
-        return batch_mark_block_issues(req, content)
+        return batch_mark_block_issues(
+            req,
+            content,
+            allow_existing_main_cea_comment=allowExistingMainCeaComment,
+            allow_other_statuses=allowOtherStatuses,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:

@@ -19,6 +19,7 @@ export const blockIssueServiceMock: BlockIssueService = {
         {
           key: `${key}-101`,
           summary: '关键验证路径阻塞',
+          status: 'OPENED',
           ipr: 640,
           mainCeaComment: 'BLOCK',
           additionalCeaComment: 'LE1',
@@ -27,6 +28,7 @@ export const blockIssueServiceMock: BlockIssueService = {
         {
           key: `${key}-128`,
           summary: '版本合入后回归失败',
+          status: 'ASSIGNED',
           ipr: 420,
           mainCeaComment: 'TOP',
           additionalCeaComment: 'LE2',

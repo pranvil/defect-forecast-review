@@ -1,6 +1,19 @@
-import { Plus, Search, Sparkles, Trash2 } from 'lucide-react'
+import { AlertTriangle, Database, Download, FileSpreadsheet, History, Plus, Search, Sparkles, Trash2, Wand2 } from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { Kpi } from '@/components/common/Kpi'
+import { ExcelTemplatePreview } from '@/components/excel-preview/ExcelTemplatePreview'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,6 +26,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -20,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -31,7 +46,6 @@ import {
 import { services } from '@/services'
 import { ProjectPicker } from '@/components/common/ProjectPicker'
 import { useForecastStore } from '@/stores/forecastStore'
-import { useProjectStore } from '@/stores/projectStore'
 import { useTeamStore } from '@/stores/teamStore'
 import {
   ensureMilestoneDateIso,
@@ -41,7 +55,9 @@ import {
   mondayOfCalendarWeek,
   normalizeMilestoneDateToIso,
   parseIsoDateLocal,
+  compareWeekAsc,
 } from '@/utils/week'
+import { isReviewMode } from '@/runtime/mode'
 import { formatProjectLabel } from '@/utils/projectLibrary'
 import { defectInputFromParams, findTopSimilarProjects } from '@/utils/defectCalculation'
 import {
@@ -64,6 +80,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import type { ForecastResult } from '@/services/forecastService'
+import type { MilestoneLabel } from '@/types/project'
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
 type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
@@ -81,8 +99,8 @@ function optionalRateFromForm(s: string): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-function formatOptionalPercent(n: number | undefined): string {
-  return n === undefined ? '—' : `${n}%`
+function formatOptionalPercent(n: number | null | undefined): string {
+  return n == null ? '—' : `${n}%`
 }
 
 /** 由周期与日期输入得到规范化的周次 + 周一 ISO 日期；无法推算则返回 null。 */
@@ -92,6 +110,7 @@ function resolveMilestoneWeekAndDate(
 ): { week: string; date: string } | null {
   const weekTrim = weekRaw.trim()
   const dateT = dateTextRaw.trim()
+  if (!weekTrim && !dateT) return { week: '', date: '' }
   const fromText = dateT ? normalizeMilestoneDateToIso(dateT, weekTrim) : ''
   const fromWeek = milestoneWeekToMondayIso(weekTrim)
   const dateIso = fromText || fromWeek
@@ -117,6 +136,33 @@ function milestoneRowFromRates(
   }
 }
 
+function firstScheduledMilestone(milestones: MilestoneParam[]): MilestoneParam | null {
+  return milestones
+    .filter((milestone) => milestone.week.trim())
+    .slice()
+    .sort((a, b) => compareWeekAsc(a.week, b.week))[0] ?? null
+}
+
+function milestoneWeekForDataset(week: string): string {
+  const trimmed = week.trim().toUpperCase()
+  const parsed = /(?:\d{2}|\d{4})?W(\d{1,2})/.exec(trimmed)
+  return parsed ? `W${Number(parsed[1])}` : trimmed
+}
+
+function milestoneLabelsFromCurrentNodes(milestones: MilestoneParam[]): MilestoneLabel[] {
+  return milestones
+    .filter((milestone) => milestone.week.trim())
+    .slice()
+    .sort((a, b) => compareWeekAsc(a.week, b.week))
+    .map((milestone) => ({
+      label: milestone.name,
+      week: milestoneWeekForDataset(milestone.week),
+      devResolutionRate: milestone.devResolutionRate,
+      testCompletionRate: milestone.testCompletionRate,
+      testSubmissionRate: milestone.testSubmissionRate,
+    }))
+}
+
 export function ParamsPage() {
   const hydrateDefaultsFromServer = useForecastStore((s) => s.hydrateDefaultsFromServer)
   const refProjects = useForecastStore((s) => s.refProjects)
@@ -127,14 +173,23 @@ export function ParamsPage() {
   const addMilestone = useForecastStore((s) => s.addMilestone)
   const updateMilestone = useForecastStore((s) => s.updateMilestone)
   const removeMilestone = useForecastStore((s) => s.removeMilestone)
+  const teamSelection = useForecastStore((s) => s.teamSelection)
+  const toggleSelectedTeam = useForecastStore((s) => s.toggleSelectedTeam)
+  const ensureDefaultTeamSelection = useForecastStore((s) => s.ensureDefaultTeamSelection)
   const params = useForecastStore((s) => s.params)
   const setParams = useForecastStore((s) => s.setParams)
-  const setActiveSection = useProjectStore((s) => s.setActiveSection)
   const teams = useTeamStore((s) => s.teams)
   const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
 
-  const testingTeams = teams.filter((x) => x.type === 'testing')
-  const devTeams = teams.filter((x) => x.type === 'development')
+  const testingTeams = React.useMemo(() => teams.filter((x) => x.type === 'testing'), [teams])
+  const devTeams = React.useMemo(() => teams.filter((x) => x.type === 'development'), [teams])
+
+  React.useEffect(() => {
+    ensureDefaultTeamSelection(
+      testingTeams.map((t) => t.name),
+      devTeams.map((t) => t.name),
+    )
+  }, [devTeams, ensureDefaultTeamSelection, testingTeams])
 
   const [projectCycleByName, setProjectCycleByName] = React.useState<Record<string, string>>({})
   const [projectDisplayNameByKey, setProjectDisplayNameByKey] = React.useState<Record<string, string>>({})
@@ -212,6 +267,68 @@ export function ParamsPage() {
     similarity: 75,
     source: '手工添加',
   })
+  const [forecastResult, setForecastResult] = React.useState<ForecastResult | null>(null)
+  const [forecastError, setForecastError] = React.useState('')
+  const [isForecasting, setIsForecasting] = React.useState(false)
+  const [shouldScrollToForecast, setShouldScrollToForecast] = React.useState(false)
+  const forecastResultRef = React.useRef<HTMLDivElement | null>(null)
+
+  const enabledTestingTeams = React.useMemo(
+    () => (teamSelection.testing.length ? teamSelection.testing : testingTeams.map((t) => t.name)),
+    [teamSelection.testing, testingTeams],
+  )
+  const enabledDevTeams = React.useMemo(
+    () => (teamSelection.development.length ? teamSelection.development : devTeams.map((t) => t.name)),
+    [devTeams, teamSelection.development],
+  )
+
+  const forecastInput = React.useMemo(
+    () => ({
+      params,
+      enabledTestingTeams,
+      enabledDevTeams,
+      testingTeamConfigs: testingTeams,
+      devTeamConfigs: devTeams,
+      milestones,
+      refProjects,
+    }),
+    [devTeams, enabledDevTeams, enabledTestingTeams, milestones, params, refProjects, testingTeams],
+  )
+
+  const runForecast = React.useCallback(() => {
+    const firstMilestone = firstScheduledMilestone(milestones)
+    const startWeek = params.startWeek.trim()
+    if (firstMilestone && startWeek && compareWeekAsc(firstMilestone.week, startWeek) !== 0) {
+      const message = `项目开始时间是 ${startWeek}，但第一个有周期的节点 ${firstMilestone.name} 是 ${firstMilestone.week}。请先修改项目开始时间或节点周期，保持两者一致。`
+      setForecastResult(null)
+      setForecastError(message)
+      toast('开始时间冲突', { description: message })
+      return
+    }
+    setIsForecasting(true)
+    setForecastError('')
+    void services.forecastService
+      .getForecastResult(forecastInput)
+      .then((result) => {
+        setForecastResult(result)
+        setShouldScrollToForecast(true)
+        toast('预测已完成', { description: `预估总数 ${result.estimatedDefects ?? result.dataset.weekly.at(-1)?.cumCreated ?? 0}` })
+      })
+      .catch((e: unknown) => {
+        setForecastResult(null)
+        setForecastError(e instanceof Error ? e.message : '预测服务调用失败')
+      })
+      .finally(() => setIsForecasting(false))
+  }, [forecastInput, milestones, params.startWeek])
+
+  React.useEffect(() => {
+    if (!forecastResult || !shouldScrollToForecast) return
+    const frame = window.requestAnimationFrame(() => {
+      forecastResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setShouldScrollToForecast(false)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [forecastResult, shouldScrollToForecast])
 
   const toggleParamValue = (
     key: 'operators' | 'userPrograms',
@@ -223,6 +340,37 @@ export function ParamsPage() {
       [key]: checked ? Array.from(new Set([...current, value])) : current.filter((x) => x !== value),
     })
   }
+
+  const updateInlineMilestone = React.useCallback(
+    (index: number, patch: Partial<MilestoneParam>) => {
+      const current = milestones[index]
+      if (!current) return
+      updateMilestone(index, { ...current, ...patch })
+    },
+    [milestones, updateMilestone],
+  )
+
+  const updateInlineMilestoneSchedule = React.useCallback(
+    (index: number, weekRaw: string, dateRaw: string) => {
+      const resolved = resolveMilestoneWeekAndDate(weekRaw, dateRaw)
+      if (!resolved) {
+        toast('请填写有效周期或日期', {
+          description: '日期须能解析为有效日历日，或清空周期和日期',
+        })
+        return
+      }
+      updateInlineMilestone(index, { week: resolved.week, date: resolved.date })
+    },
+    [updateInlineMilestone],
+  )
+
+  const updateInlineMilestoneRate = React.useCallback(
+    (index: number, key: 'devResolutionRate' | 'testCompletionRate' | 'testSubmissionRate', raw: string) => {
+      const value = optionalRateFromForm(raw)
+      updateInlineMilestone(index, { [key]: value } as Partial<MilestoneParam>)
+    },
+    [updateInlineMilestone],
+  )
 
   const autoIdentifyRefProjects = () => {
     void services.projectService
@@ -247,8 +395,41 @@ export function ParamsPage() {
       })
   }
 
+  const forecastDataset = React.useMemo(() => {
+    if (!forecastResult) return undefined
+    const currentMilestoneLabels = milestoneLabelsFromCurrentNodes(milestones)
+    return {
+      ...forecastResult.dataset,
+      milestones: currentMilestoneLabels.length ? currentMilestoneLabels : forecastResult.dataset.milestones,
+    }
+  }, [forecastResult, milestones])
+  const forecastFinalRow = forecastDataset?.weekly.at(-1)
+  const forecastEstimatedDefects = forecastResult
+    ? forecastResult.estimatedDefects ?? forecastFinalRow?.cumCreated ?? 0
+    : 0
+  const enrichedForecastResult = React.useMemo(
+    () => (forecastResult && forecastDataset ? { ...forecastResult, dataset: forecastDataset } : forecastResult),
+    [forecastDataset, forecastResult],
+  )
+
+  const saveForecastRecord = React.useCallback(() => {
+    if (!enrichedForecastResult) return
+    void services.forecastService
+      .saveForecastVersion({
+        projectName: params.newProjectName,
+        input: forecastInput,
+        result: enrichedForecastResult,
+      })
+      .then((saved) => {
+        toast('已保存预测版本', { description: `版本 ${saved.id.slice(0, 8)}` })
+      })
+      .catch((e: unknown) => {
+        toast('保存失败', { description: e instanceof Error ? e.message : '服务调用失败' })
+      })
+  }, [enrichedForecastResult, forecastInput, params.newProjectName])
+
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="text-2xl font-semibold">新项目预测</h2>
         <p className="mt-1 text-sm text-slate-500">
@@ -272,16 +453,17 @@ export function ParamsPage() {
               <Button
                 type="button"
                 className="rounded-2xl px-6"
-                onClick={() => setActiveSection('forecastResult')}
+                disabled={isForecasting}
+                onClick={runForecast}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
-                开始预测
+                {isForecasting ? '预测中...' : '开始预测'}
               </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card className="rounded-2xl">
+        <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-3 xl:auto-rows-fr">
+          <Card className="h-full rounded-2xl">
             <CardHeader>
               <CardTitle>项目基础信息</CardTitle>
             </CardHeader>
@@ -402,7 +584,7 @@ export function ParamsPage() {
               </CardContent>
             </Card>
 
-            <Card className="rounded-2xl">
+            <Card className="h-full rounded-2xl">
               <CardHeader>
                 <CardTitle>技术变量</CardTitle>
               </CardHeader>
@@ -562,11 +744,151 @@ export function ParamsPage() {
                 </div>
               </CardContent>
             </Card>
+
+            <Card className="h-full rounded-2xl">
+              <CardHeader>
+                <CardTitle>节点信息</CardTitle>
+                <CardDescription>默认节点已预置；周期为空的节点只作为模板。</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[455px] rounded-xl border">
+                  <Table className="min-w-[760px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[96px]">节点名</TableHead>
+                        <TableHead className="w-[92px]">周期</TableHead>
+                        <TableHead className="w-[132px]">日期</TableHead>
+                        <TableHead className="whitespace-nowrap">开发解决率</TableHead>
+                        <TableHead className="whitespace-nowrap">测试完成率</TableHead>
+                        <TableHead className="whitespace-nowrap">测试提交率</TableHead>
+                        <TableHead>操作</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {milestones.map((m, idx) => (
+                        <TableRow key={m.name + m.week + String(idx)}>
+                          <TableCell>
+                            <Input
+                              defaultValue={m.name}
+                              className="h-8 min-w-[80px] rounded-lg px-2"
+                              onBlur={(e) => {
+                                const name = e.target.value.trim()
+                                if (!name) {
+                                  toast('节点名不能为空')
+                                  e.target.value = m.name
+                                  return
+                                }
+                                if (name !== m.name) updateInlineMilestone(idx, { name })
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={m.week}
+                              className="h-8 min-w-[78px] rounded-lg px-2"
+                              placeholder="26W20"
+                              onBlur={(e) => {
+                                const week = e.target.value.trim()
+                                if (week === m.week) return
+                                updateInlineMilestoneSchedule(idx, week, m.date)
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={m.date}
+                              className="h-8 min-w-[120px] rounded-lg px-2"
+                              onBlur={(e) => {
+                                const dateText = e.target.value.trim()
+                                if (dateText === m.date) return
+                                updateInlineMilestoneSchedule(idx, m.week, dateText)
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={formatOptionalPercent(m.devResolutionRate) === '—' ? '' : formatOptionalPercent(m.devResolutionRate)}
+                              className="h-8 min-w-[84px] rounded-lg px-2"
+                              onBlur={(e) => updateInlineMilestoneRate(idx, 'devResolutionRate', e.target.value)}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={formatOptionalPercent(m.testCompletionRate) === '—' ? '' : formatOptionalPercent(m.testCompletionRate)}
+                              className="h-8 min-w-[84px] rounded-lg px-2"
+                              onBlur={(e) => updateInlineMilestoneRate(idx, 'testCompletionRate', e.target.value)}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={formatOptionalPercent(m.testSubmissionRate) === '—' ? '' : formatOptionalPercent(m.testSubmissionRate)}
+                              className="h-8 min-w-[84px] rounded-lg px-2"
+                              onBlur={(e) => updateInlineMilestoneRate(idx, 'testSubmissionRate', e.target.value)}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-8 rounded-xl px-3"
+                                onClick={() => removeMilestone(idx)}
+                              >
+                                删除
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-2xl"
+                    onClick={() => setIsAddMilestoneOpen(true)}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    新增节点
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-2xl"
+                    onClick={() => milestoneFileInputRef.current?.click()}
+                  >
+                    批量导入
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-2xl"
+                    onClick={() => {
+                      const json = JSON.stringify(milestones, null, 2)
+                      const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `milestones.${new Date().toISOString().slice(0, 10)}.json`
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                      toast('已导出', { description: '节点信息已导出为 JSON' })
+                    }}
+                  >
+                    导出节点
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
-        <Card className="rounded-2xl xl:col-span-3">
+      <div className={`grid grid-cols-1 items-stretch gap-6 xl:grid-cols-3 xl:auto-rows-fr ${forecastResult ? 'order-last' : ''}`}>
+        <Card className="h-full rounded-2xl">
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -638,12 +960,78 @@ export function ParamsPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl xl:col-span-2">
+        <Card className="h-full rounded-2xl">
+          <CardHeader>
+            <CardTitle>测试团队拆分</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[300px] rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>启用</TableHead>
+                    <TableHead>聚合团队</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {testingTeams.map((t) => (
+                    <TableRow key={t.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={teamSelection.testing.includes(t.name)}
+                          onCheckedChange={(checked) =>
+                            toggleSelectedTeam('testing', t.name, checked === true)
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">{t.name}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        <Card className="h-full rounded-2xl">
+          <CardHeader>
+            <CardTitle>开发团队拆分</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[300px] rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>启用</TableHead>
+                    <TableHead>聚合团队</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {devTeams.map((t) => (
+                    <TableRow key={t.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={teamSelection.development.includes(t.name)}
+                          onCheckedChange={(checked) =>
+                            toggleSelectedTeam('development', t.name, checked === true)
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">{t.name}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        <Card className="hidden">
           <CardHeader>
             <CardTitle>节点信息</CardTitle>
             <CardDescription>
-              不同项目节点数量和名称都不同，所以作为基础参数单独维护。日期保存为每周周一的
-              YYYY-MM-DD（含年份），与周期联动；旧数据仅有月/日时会按周期补全年份。
+              默认节点已预置，可按项目维护周期和日期；填写日期时会保存为每周周一的
+              YYYY-MM-DD（含年份），并与周期联动。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -685,11 +1073,11 @@ export function ParamsPage() {
                             })
                             setMilestoneDateTextEdit(dateIso)
                             setMilestoneEditRates({
-                              dev: m.devResolutionRate !== undefined ? String(m.devResolutionRate) : '',
+                              dev: m.devResolutionRate != null ? String(m.devResolutionRate) : '',
                               testComplete:
-                                m.testCompletionRate !== undefined ? String(m.testCompletionRate) : '',
+                                m.testCompletionRate != null ? String(m.testCompletionRate) : '',
                               testSubmit:
-                                m.testSubmissionRate !== undefined ? String(m.testSubmissionRate) : '',
+                                m.testSubmissionRate != null ? String(m.testSubmissionRate) : '',
                             })
                             setIsEditMilestoneOpen(true)
                           }}
@@ -760,7 +1148,7 @@ export function ParamsPage() {
                       })
                       .filter(
                         (x): x is MilestoneParam =>
-                          x !== null && Boolean(x.name) && Boolean(x.week),
+                          x !== null && Boolean(x.name),
                       )
                     if (!rows.length) {
                       toast('导入失败', { description: '文件中没有有效节点' })
@@ -799,7 +1187,7 @@ export function ParamsPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      <div className="hidden">
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle>测试团队拆分</CardTitle>
@@ -808,6 +1196,7 @@ export function ParamsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>启用</TableHead>
                   <TableHead>分类</TableHead>
                   <TableHead>覆盖范围</TableHead>
                 </TableRow>
@@ -815,6 +1204,14 @@ export function ParamsPage() {
               <TableBody>
                 {testingTeams.map((t) => (
                   <TableRow key={t.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={teamSelection.testing.includes(t.name)}
+                        onCheckedChange={(checked) =>
+                          toggleSelectedTeam('testing', t.name, checked === true)
+                        }
+                      />
+                    </TableCell>
                     <TableCell className="font-medium">{t.name}</TableCell>
                     <TableCell className="text-slate-500">{t.note || '固定分类'}</TableCell>
                   </TableRow>
@@ -832,15 +1229,24 @@ export function ParamsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>团队</TableHead>
-                  <TableHead>默认来源</TableHead>
+                  <TableHead>启用</TableHead>
+                  <TableHead>分类</TableHead>
+                  <TableHead>覆盖范围</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {devTeams.map((t) => (
                   <TableRow key={t.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={teamSelection.development.includes(t.name)}
+                        onCheckedChange={(checked) =>
+                          toggleSelectedTeam('development', t.name, checked === true)
+                        }
+                      />
+                    </TableCell>
                     <TableCell className="font-medium">{t.name}</TableCell>
-                    <TableCell>按历史项目自动识别</TableCell>
+                    <TableCell className="text-slate-500">{t.note || '固定分类'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -848,6 +1254,201 @@ export function ParamsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {forecastError && (
+        <Card className="rounded-2xl border-rose-200 bg-rose-50">
+          <CardContent className="pt-6 text-sm text-rose-700">{forecastError}</CardContent>
+        </Card>
+      )}
+
+      {forecastResult && forecastDataset && forecastFinalRow && (
+        <div ref={forecastResultRef} className="space-y-6 scroll-mt-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-lg font-semibold">预测结果</h3>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-2xl"
+                onClick={saveForecastRecord}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                保存预测记录
+              </Button>
+              <Button
+                type="button"
+                className="rounded-2xl"
+                disabled={isReviewMode}
+                onClick={() => {
+                  if (isReviewMode) {
+                    toast('评审版暂未开放', { description: 'Excel 导出在评审版中已禁用' })
+                    return
+                  }
+                  void services.exportService
+                    .exportForecastToExcel({
+                      projectName: params.newProjectName,
+                      dataset: forecastDataset,
+                    })
+                    .then(() => {
+                      toast('已导出', { description: '已生成并下载 xlsx 文件' })
+                    })
+                    .catch((e: unknown) => {
+                      toast('导出失败', {
+                        description: e instanceof Error ? e.message : '请确认本地导出服务已启动',
+                      })
+                    })
+                }}
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                导出 Excel
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Kpi title="预估 Bug 总数" value={forecastEstimatedDefects} sub={params.newProjectName} icon={Sparkles} />
+            <Kpi title="预测总 Fixed" value={forecastFinalRow.cumFixed} sub={`${params.startWeek} - ${params.endWeek}`} icon={Database} />
+            <Kpi title="最终 Backlog" value={forecastFinalRow.backlog} sub="累计创建 - 累计解决" icon={History} />
+            <Kpi title="参考项目数" value={forecastResult.referenceProjects?.length ?? refProjects.length} sub="当前参考项目列表" icon={Wand2} />
+          </div>
+
+          {!!forecastResult.warnings?.length && (
+            <Card className="rounded-2xl border-amber-200 bg-amber-50">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base text-amber-900">
+                  <AlertTriangle className="h-4 w-4" />
+                  预测约束提醒
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-amber-900">
+                {forecastResult.warnings.map((warning, index) => (
+                  <div key={`${warning.type}-${warning.milestone ?? ''}-${index}`}>
+                    {warning.message}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
+            </CardHeader>
+            <CardContent className="h-[340px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={forecastDataset.weekly}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="weekLabel" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Area type="monotone" dataKey="created" stroke="#0284c7" fill="#7dd3fc" fillOpacity={0.25} strokeWidth={2} />
+                  <Area type="monotone" dataKey="fixed" stroke="#16a34a" fill="#86efac" fillOpacity={0.2} strokeWidth={2} />
+                  <Line type="monotone" dataKey="backlog" stroke="#0f172a" strokeWidth={2.5} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Tabs defaultValue="excel" className="w-full">
+            <TabsList className="rounded-2xl">
+              <TabsTrigger value="weekly">按周结果</TabsTrigger>
+              <TabsTrigger value="team">开发/测试拆分</TabsTrigger>
+              <TabsTrigger value="excel">Excel 模板预览</TabsTrigger>
+            </TabsList>
+            <TabsContent value="weekly" className="mt-4">
+              <Card className="rounded-2xl">
+                <CardContent className="pt-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>周期</TableHead>
+                        <TableHead>Created</TableHead>
+                        <TableHead>Fixed</TableHead>
+                        <TableHead>累计创建</TableHead>
+                        <TableHead>累计解决</TableHead>
+                        <TableHead>Backlog</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {forecastDataset.weekly.map((row) => (
+                        <TableRow key={row.week}>
+                          <TableCell className="font-medium">{row.weekLabel}</TableCell>
+                          <TableCell>{row.created}</TableCell>
+                          <TableCell>{row.fixed}</TableCell>
+                          <TableCell>{row.cumCreated}</TableCell>
+                          <TableCell>{row.cumFixed}</TableCell>
+                          <TableCell>{row.backlog}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="team" className="mt-4">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <Card className="rounded-2xl">
+                  <CardHeader>
+                    <CardTitle>测试团队预测 Created</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>聚合团队</TableHead>
+                          <TableHead>预测 Created</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {forecastDataset.createdTeams.map((row) => (
+                          <TableRow key={row.team}>
+                            <TableCell className="font-medium">{row.team}</TableCell>
+                            <TableCell>{row.values.reduce((sum, value) => sum + value, 0)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+                <Card className="rounded-2xl">
+                  <CardHeader>
+                    <CardTitle>开发团队预测 Fixed</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>聚合团队</TableHead>
+                          <TableHead>预测 Fixed</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {forecastDataset.fixedTeams.map((row) => (
+                          <TableRow key={row.team}>
+                            <TableCell className="font-medium">{row.team}</TableCell>
+                            <TableCell>{row.values.reduce((sum, value) => sum + value, 0)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+            <TabsContent value="excel" className="mt-4">
+              <Card className="rounded-2xl">
+                <CardHeader>
+                  <CardTitle>Excel 模板预览</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ExcelTemplatePreview projectName={params.newProjectName} dataset={forecastDataset} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
 
       <Dialog open={isAddRefOpen} onOpenChange={setIsAddRefOpen}>
         <DialogContent className="sm:max-w-[560px]">
@@ -1062,7 +1663,7 @@ export function ParamsPage() {
                 )
                 if (!resolved) {
                   toast('请填写有效周期或日期', {
-                    description: '至少填写其一；日期须能解析为有效日历日',
+                    description: '日期须能解析为有效日历日，或清空周期和日期',
                   })
                   return
                 }
@@ -1224,7 +1825,7 @@ export function ParamsPage() {
                 )
                 if (!resolved) {
                   toast('请填写有效周期或日期', {
-                    description: '至少填写其一；日期须能解析为有效日历日',
+                    description: '日期须能解析为有效日历日，或清空周期和日期',
                   })
                   return
                 }

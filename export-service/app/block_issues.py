@@ -101,9 +101,11 @@ def _to_fetch_request(req: BlockIssueMarkRequest | BlockIssueSearchRequest) -> J
 def _issue_to_row(issue: dict[str, Any]) -> BlockIssueRow:
     fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
     ipr = fields.get(IPR_FIELD)
+    status = fields.get("status") if isinstance(fields.get("status"), dict) else {}
     return BlockIssueRow(
         key=str(issue.get("key") or ""),
         summary=_string_value(fields.get("summary")),
+        status=_string_value(status.get("name") if isinstance(status, dict) else status),
         ipr=float(ipr) if isinstance(ipr, (int, float)) else None,
         mainCeaComment=_string_value(fields.get(MAIN_CEA_FIELD)),
         additionalCeaComment=_string_value(fields.get(ADDITIONAL_CEA_FIELD)),
@@ -119,7 +121,7 @@ def search_block_issues(req: BlockIssueSearchRequest) -> BlockIssueSearchResult:
         'AND status in ("MORE INFO", "ASSIGNED", "OPENED") '
         "ORDER BY priority ASC, updated DESC"
     )
-    fields = ["summary", MAIN_CEA_FIELD, ADDITIONAL_CEA_FIELD, IPR_FIELD, DEADLINE_FIELD]
+    fields = ["summary", "status", MAIN_CEA_FIELD, ADDITIONAL_CEA_FIELD, IPR_FIELD, DEADLINE_FIELD]
     issues = search_issues_paged(_to_fetch_request(req), jql, fields=fields)
     rows = [_issue_to_row(issue) for issue in issues if _is_block((issue.get("fields") or {}).get(MAIN_CEA_FIELD))]
     return BlockIssueSearchResult(projectKey=project_key, jql=jql, total=len(rows), issues=rows)
@@ -140,14 +142,14 @@ def mark_block_issue(req: BlockIssueMarkRequest) -> BlockIssueMarkResult:
     if not issue_key:
         return BlockIssueMarkResult(issueKey="", status="failed", message="Issue key 不能为空")
     existing, status_name = _read_existing_issue_state(req)
-    if status_name.upper() not in ALLOWED_BLOCK_STATUSES:
+    if not req.allowOtherStatuses and status_name.upper() not in ALLOWED_BLOCK_STATUSES:
         allowed = ", ".join(sorted(ALLOWED_BLOCK_STATUSES))
         return BlockIssueMarkResult(
             issueKey=issue_key,
             status="skipped",
             message=f"当前状态为 {status_name or '未知'}，不在允许状态范围（{allowed}），已跳过",
         )
-    if _is_block(existing):
+    if not req.allowExistingMainCeaComment and _is_block(existing):
         return BlockIssueMarkResult(issueKey=issue_key, status="skipped", message="已有 Main CEA Comment 标记，已跳过")
 
     deadline = req.deadline.strip() or _default_deadline()
@@ -180,6 +182,8 @@ def _batch_req_from_row(
     main_cea: str,
     additional: str,
     deadline: str,
+    allow_existing_main_cea_comment: bool,
+    allow_other_statuses: bool,
 ) -> BlockIssueMarkRequest:
     return BlockIssueMarkRequest(
         projectKey=base.projectKey,
@@ -201,10 +205,18 @@ def _batch_req_from_row(
         additionalCeaComment=additional,
         deadline=deadline or _default_deadline(),
         comment=reason,
+        allowExistingMainCeaComment=allow_existing_main_cea_comment,
+        allowOtherStatuses=allow_other_statuses,
     )
 
 
-def batch_mark_block_issues(base_req: JiraFetchRequest, file_bytes: bytes) -> BlockIssueBatchResult:
+def batch_mark_block_issues(
+    base_req: JiraFetchRequest,
+    file_bytes: bytes,
+    *,
+    allow_existing_main_cea_comment: bool = False,
+    allow_other_statuses: bool = False,
+) -> BlockIssueBatchResult:
     wb = load_workbook(BytesIO(file_bytes), data_only=True)
     ws = wb.active
     results: list[BlockIssueMarkResult] = []
@@ -219,7 +231,20 @@ def batch_mark_block_issues(base_req: JiraFetchRequest, file_bytes: bytes) -> Bl
         additional = _string_value(row[4] if len(row) > 4 else "")
         deadline = _date_value(row[5] if len(row) > 5 else "") or _default_deadline()
         try:
-            results.append(mark_block_issue(_batch_req_from_row(base_req, issue_key, reason, main_cea, additional, deadline)))
+            results.append(
+                mark_block_issue(
+                    _batch_req_from_row(
+                        base_req,
+                        issue_key,
+                        reason,
+                        main_cea,
+                        additional,
+                        deadline,
+                        allow_existing_main_cea_comment,
+                        allow_other_statuses,
+                    )
+                )
+            )
         except Exception as e:
             results.append(BlockIssueMarkResult(issueKey=issue_key, status="failed", message=str(e)))
     return BlockIssueBatchResult(

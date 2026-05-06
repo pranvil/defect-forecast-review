@@ -31,6 +31,9 @@ class ForecastTeamRow(BaseModel):
 class MilestoneLabel(BaseModel):
     label: str
     week: str
+    devResolutionRate: Optional[float] = None
+    testCompletionRate: Optional[float] = None
+    testSubmissionRate: Optional[float] = None
 
 
 class ForecastDataset(BaseModel):
@@ -173,10 +176,20 @@ class MilestoneParam(BaseModel):
     testSubmissionRate: Optional[float] = None
 
 
+class ForecastTeamConfig(BaseModel):
+    id: str = ""
+    name: str
+    type: Literal["testing", "development"]
+    enabled: bool = True
+    note: str = ""
+
+
 class ForecastInput(BaseModel):
     params: ForecastParams
     enabledTestingTeams: List[str] = Field(default_factory=list)
     enabledDevTeams: List[str] = Field(default_factory=list)
+    testingTeamConfigs: List[ForecastTeamConfig] = Field(default_factory=list)
+    devTeamConfigs: List[ForecastTeamConfig] = Field(default_factory=list)
     milestones: List[MilestoneParam] = Field(default_factory=list)
     refProjects: List[RefProjectRow] = Field(default_factory=list)
 
@@ -204,6 +217,18 @@ class ForecastFactors(BaseModel):
     pipeline: float
 
 
+class ForecastWarning(BaseModel):
+    type: Literal["milestone_conflict", "team_allocation"]
+    severity: Literal["warning", "info"] = "warning"
+    message: str
+    milestone: Optional[str] = None
+    metric: Optional[Literal["testSubmissionRate", "devResolutionRate"]] = None
+    currentRate: Optional[float] = None
+    suggestedRate: Optional[float] = None
+    currentWeek: Optional[str] = None
+    suggestedWeek: Optional[str] = None
+
+
 class ForecastResult(BaseModel):
     dataset: ForecastDataset
     teamSummary: List[ForecastTeamSummaryRow]
@@ -211,6 +236,7 @@ class ForecastResult(BaseModel):
     baseValue: Optional[int] = None
     referenceProjects: List[ForecastReferenceProjectRow] = Field(default_factory=list)
     factors: Optional[ForecastFactors] = None
+    warnings: List[ForecastWarning] = Field(default_factory=list)
 
 
 class SaveForecastVersionRequest(BaseModel):
@@ -226,6 +252,7 @@ class ForecastVersionRow(BaseModel):
     cycle: str
     note: str
     createdAt: str
+    result: Optional[ForecastResult] = None
 
 
 class CompareSeriesPoint(BaseModel):
@@ -327,6 +354,7 @@ class BlockIssueSearchRequest(JiraFetchRequest):
 class BlockIssueRow(BaseModel):
     key: str
     summary: str = ""
+    status: str = ""
     ipr: Optional[float] = None
     mainCeaComment: str = ""
     additionalCeaComment: str = ""
@@ -346,6 +374,8 @@ class BlockIssueMarkRequest(JiraFetchRequest):
     additionalCeaComment: str = ""
     deadline: str = ""
     comment: str = ""
+    allowExistingMainCeaComment: bool = False
+    allowOtherStatuses: bool = False
 
 
 class BlockIssueMarkResult(BaseModel):

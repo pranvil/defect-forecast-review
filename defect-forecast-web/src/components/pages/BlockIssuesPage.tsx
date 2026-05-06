@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -32,7 +33,7 @@ import { services } from '@/services'
 import type { BlockIssueBatchResult, BlockIssueRow } from '@/services/blockIssueService'
 import { useSettingsStore } from '@/stores/settingsStore'
 
-const DEFAULT_PROJECT_KEY = 'MNTNPOM'
+const DEFAULT_PROJECT_KEY = ''
 const MAIN_CEA_OPTIONS = ['ShowStopper', 'TOP', 'BLOCK', 'BUGASS'] as const
 
 function defaultDeadline() {
@@ -48,6 +49,37 @@ function downloadUrl(url: string) {
   a.remove()
 }
 
+function downloadExcelHtml(filename: string, title: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const escapeHtml = (value: string | number | null | undefined) =>
+    String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
+  const headerHtml = headers
+    .map((h) => `<th style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;">${escapeHtml(h)}</th>`)
+    .join('')
+  const bodyHtml = rows
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell) => `<td style="border:1px solid #d1d5db;padding:6px 8px;">${escapeHtml(cell)}</td>`)
+          .join('')}</tr>`,
+    )
+    .join('')
+  const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><h2>${escapeHtml(title)}</h2><table style="border-collapse:collapse;font-size:12px;"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></body></html>`
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 function resultTone(status: string) {
   if (status === 'updated') return 'text-emerald-700'
   if (status === 'skipped') return 'text-amber-700'
@@ -58,6 +90,7 @@ export function BlockIssuesPage() {
   const jiraConnection = useSettingsStore((s) => s.jiraConnection)
   const [projectKey, setProjectKey] = React.useState(DEFAULT_PROJECT_KEY)
   const [issues, setIssues] = React.useState<BlockIssueRow[]>([])
+  const [issueTotal, setIssueTotal] = React.useState(0)
   const [lastJql, setLastJql] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [issueKey, setIssueKey] = React.useState('')
@@ -69,6 +102,8 @@ export function BlockIssuesPage() {
   const [file, setFile] = React.useState<File | null>(null)
   const [batching, setBatching] = React.useState(false)
   const [batchResult, setBatchResult] = React.useState<BlockIssueBatchResult | null>(null)
+  const [allowExistingMainCeaComment, setAllowExistingMainCeaComment] = React.useState(false)
+  const [allowOtherStatuses, setAllowOtherStatuses] = React.useState(false)
 
   const requestBase = React.useMemo(
     () => ({
@@ -95,6 +130,7 @@ export function BlockIssuesPage() {
     try {
       const res = await services.blockIssueService.search({ ...requestBase, projectKey: key })
       setIssues(res.issues)
+      setIssueTotal(res.total)
       setLastJql(res.jql)
       toast('拉取完成', { description: `共找到 ${res.total} 条 Block 问题` })
     } catch (e) {
@@ -114,11 +150,14 @@ export function BlockIssuesPage() {
     try {
       const res = await services.blockIssueService.mark({
         ...requestBase,
+        projectKey: requestBase.projectKey || key.split('-')[0] || 'BLOCK',
         issueKey: key,
         mainCeaComment: mainCea,
         additionalCeaComment: additional,
         deadline: deadline || defaultDeadline(),
         comment,
+        allowExistingMainCeaComment,
+        allowOtherStatuses,
       })
       toast(res.status === 'updated' ? '提交完成' : res.status === 'skipped' ? '已跳过' : '提交失败', {
         description: `${res.issueKey}: ${res.message}`,
@@ -126,7 +165,7 @@ export function BlockIssuesPage() {
       if (res.status === 'updated') {
         setIssueKey('')
         setComment('')
-        void search()
+        if (projectKey.trim()) void search()
       }
     } catch (e) {
       toast('提交失败', { description: e instanceof Error ? e.message : '服务调用失败' })
@@ -142,17 +181,45 @@ export function BlockIssuesPage() {
     }
     setBatching(true)
     try {
-      const res = await services.blockIssueService.batchMark({ req: requestBase, file })
+      const res = await services.blockIssueService.batchMark({
+        req: requestBase,
+        file,
+        allowExistingMainCeaComment,
+        allowOtherStatuses,
+      })
       setBatchResult(res)
       toast('批量处理完成', {
         description: `总计 ${res.totalRows} 条，更新 ${res.updated}，跳过 ${res.skipped}，失败 ${res.failed}`,
       })
-      void search()
+      if (projectKey.trim()) void search()
     } catch (e) {
       toast('批量提交失败', { description: e instanceof Error ? e.message : '服务调用失败' })
     } finally {
       setBatching(false)
     }
+  }
+
+  const exportIssues = () => {
+    if (!issues.length) {
+      toast('无可导出数据', { description: '请先拉取 Block 问题列表' })
+      return
+    }
+    const key = projectKey.trim().toUpperCase() || 'block'
+    downloadExcelHtml(
+      `block-issues.${key}.${new Date().toISOString().slice(0, 10)}.xls`,
+      `${key} Block 问题列表`,
+      ['Defect Key', 'Summary', 'Status', 'IPR', 'Main CEA Comment', 'Additional CEA Comment', 'Deadline'],
+      issues.map((issue) => [
+        issue.key,
+        issue.summary,
+        issue.status,
+        issue.ipr ?? '',
+        issue.mainCeaComment,
+        issue.additionalCeaComment,
+        issue.deadline,
+      ]),
+    )
+    toast('已导出', { description: `共导出 ${issues.length} 条 Block 问题` })
   }
 
   return (
@@ -176,17 +243,27 @@ export function BlockIssuesPage() {
           <CardDescription>查询 Defect/defect_new，状态为 MORE INFO、ASSIGNED、OPENED，且 Main CEA Comment 为 ShowStopper、TOP、BLOCK、BUGASS 的问题。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-[280px_auto]">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[280px_auto_auto]">
             <div className="space-y-2">
               <Label>项目 Key</Label>
               <Input value={projectKey} onChange={(e) => setProjectKey(e.target.value.toUpperCase())} className="rounded-2xl font-mono" />
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <Button className="rounded-2xl" disabled={loading} onClick={() => void search()}>
                 {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 拉取列表
               </Button>
             </div>
+            <div className="flex items-end">
+              <Button type="button" variant="outline" className="rounded-2xl" disabled={!issues.length} onClick={exportIssues}>
+                <FileSpreadsheet className="h-4 w-4" />
+                导出 Excel
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-sm text-slate-600">当前列表 Issue 总数</div>
+            <div className="text-2xl font-semibold text-slate-900">{issueTotal}</div>
           </div>
           {lastJql ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-600">
@@ -199,6 +276,7 @@ export function BlockIssuesPage() {
                 <TableRow>
                   <TableHead className="min-w-[130px]">Defect Key</TableHead>
                   <TableHead className="min-w-[320px]">Summary</TableHead>
+                  <TableHead className="min-w-[120px]">Status</TableHead>
                   <TableHead className="min-w-[100px] text-right">IPR</TableHead>
                   <TableHead className="min-w-[170px]">Main CEA Comment</TableHead>
                   <TableHead className="min-w-[180px]">Additional CEA Comment</TableHead>
@@ -210,6 +288,9 @@ export function BlockIssuesPage() {
                   <TableRow key={issue.key}>
                     <TableCell className="font-mono font-medium">{issue.key}</TableCell>
                     <TableCell>{issue.summary || '-'}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{issue.status || '-'}</Badge>
+                    </TableCell>
                     <TableCell className="text-right">{issue.ipr ?? '-'}</TableCell>
                     <TableCell>
                       <Badge variant="outline">{issue.mainCeaComment || '-'}</Badge>
@@ -220,7 +301,7 @@ export function BlockIssuesPage() {
                 ))}
                 {!issues.length ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-sm text-slate-500">
+                    <TableCell colSpan={7} className="py-8 text-center text-sm text-slate-500">
                       {loading ? '正在拉取...' : '暂无数据'}
                     </TableCell>
                   </TableRow>
@@ -271,6 +352,32 @@ export function BlockIssuesPage() {
               <Label>Comment</Label>
               <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="写入 Jira 标准 comment" className="min-h-[110px] rounded-2xl" />
             </div>
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="single-allow-existing-main-cea"
+                  checked={allowExistingMainCeaComment}
+                  onCheckedChange={(checked) => setAllowExistingMainCeaComment(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="single-allow-existing-main-cea">不跳过已有 Main CEA Comment 的问题</Label>
+                  <p className="text-xs leading-5 text-slate-500">勾选后即使当前 Main CEA Comment 已有阻塞类值，也会按本次输入覆盖提交。</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="single-allow-other-statuses"
+                  checked={allowOtherStatuses}
+                  onCheckedChange={(checked) => setAllowOtherStatuses(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="single-allow-other-statuses">不跳过非 MORE INFO / ASSIGNED / OPENED 状态的问题</Label>
+                  <p className="text-xs leading-5 text-slate-500">勾选后状态不在默认范围内也允许提交 Block 标记。</p>
+                </div>
+              </div>
+            </div>
             <Button className="rounded-2xl" disabled={submitting} onClick={() => void submitSingle()}>
               <Tag className="h-4 w-4" />
               提交阻塞标记
@@ -294,6 +401,32 @@ export function BlockIssuesPage() {
               </div>
             </div>
             <Input type="file" accept=".xlsx,.xlsm" className="rounded-2xl" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="batch-allow-existing-main-cea"
+                  checked={allowExistingMainCeaComment}
+                  onCheckedChange={(checked) => setAllowExistingMainCeaComment(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="batch-allow-existing-main-cea">不跳过已有 Main CEA Comment 的问题</Label>
+                  <p className="text-xs leading-5 text-slate-500">勾选后批量处理会覆盖已有阻塞类 Main CEA Comment。</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="batch-allow-other-statuses"
+                  checked={allowOtherStatuses}
+                  onCheckedChange={(checked) => setAllowOtherStatuses(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="batch-allow-other-statuses">不跳过非 MORE INFO / ASSIGNED / OPENED 状态的问题</Label>
+                  <p className="text-xs leading-5 text-slate-500">勾选后批量处理不再因状态超出默认范围而跳过。</p>
+                </div>
+              </div>
+            </div>
             <div className="flex flex-wrap gap-3">
               <Button className="rounded-2xl" disabled={batching} onClick={() => void submitBatch()}>
                 {batching ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}

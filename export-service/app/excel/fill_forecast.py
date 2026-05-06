@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
+from openpyxl.styles import Alignment
 from openpyxl.utils.cell import column_index_from_string
 from openpyxl.workbook.workbook import Workbook
 
@@ -31,6 +32,14 @@ def _coerce_date(value: str) -> str:
 def _max_weeks_from_template() -> int:
     # C .. AB inclusive
     return column_index_from_string("AB") - column_index_from_string("C") + 1
+
+
+def _week_start_col() -> int:
+    return column_index_from_string("C")
+
+
+def _week_end_col() -> int:
+    return column_index_from_string("AB")
 
 
 def _values_pad(values: List[int], length: int) -> List[int]:
@@ -66,9 +75,80 @@ def _milestones_to_map(milestones: Iterable[MilestoneLabel]) -> Dict[int, str]:
     return out
 
 
+def _milestone_rates_to_map(milestones: Iterable[MilestoneLabel], metric: str) -> Dict[int, str]:
+    out: Dict[int, str] = {}
+    for m in milestones:
+        w = _week_to_index(m.week)
+        if w is None:
+            continue
+        value = getattr(m, metric, None)
+        if value is None:
+            continue
+        text = f"{value:g}%"
+        out[w] = f"{out[w]} / {text}" if out.get(w) else text
+    return out
+
+
 def _write_row(ws, start: Cell, values: List[object]) -> None:
     for i, v in enumerate(values):
         ws.cell(row=start.row, column=start.col + i, value=v)
+
+
+def _clear_week_area(ws, max_row: int) -> None:
+    for merged in list(ws.merged_cells.ranges):
+        if merged.max_row < 1 or merged.min_row > max_row:
+            continue
+        if merged.max_col < _week_start_col() or merged.min_col > _week_end_col():
+            continue
+        ws.unmerge_cells(str(merged))
+    for row in range(1, max_row + 1):
+        for col in range(_week_start_col(), _week_end_col() + 1):
+            ws.cell(row=row, column=col).value = None
+
+
+def _month_label(week_label: str, date_text: str) -> str:
+    year = 2026
+    clean_week = week_label.strip().upper()
+    if "W" in clean_week:
+        left = clean_week.split("W", 1)[0]
+        if left:
+            try:
+                raw_year = int(left[-2:])
+                year = 2000 + raw_year
+            except Exception:
+                year = 2026
+    month = 0
+    clean_date = date_text.strip()
+    if "/" in clean_date:
+        try:
+            month = int(clean_date.split("/", 1)[0])
+        except Exception:
+            month = 0
+    if month <= 0:
+        return f"{year}年"
+    return f"{year}年{month}月"
+
+
+def _write_month_header(ws, weekly) -> None:
+    if not weekly:
+        return
+    ws.cell(row=1, column=1, value="项目名")
+    ws.cell(row=1, column=2, value="Month")
+    segments: list[tuple[str, int, int]] = []
+    start_col = _week_start_col()
+    for index, point in enumerate(weekly):
+        label = _month_label(point.weekLabel, point.date)
+        col = start_col + index
+        if segments and segments[-1][0] == label:
+            prev_label, prev_start, _ = segments[-1]
+            segments[-1] = (prev_label, prev_start, col)
+        else:
+            segments.append((label, col, col))
+    for label, first_col, last_col in segments:
+        cell = ws.cell(row=1, column=first_col, value=label)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if last_col > first_col:
+            ws.merge_cells(start_row=1, start_column=first_col, end_row=1, end_column=last_col)
 
 
 def _find_row_by_label(ws, label: str, columns: List[int]) -> Optional[int]:
@@ -104,8 +184,10 @@ def fill_forecast_into_template(wb: Workbook, req: ExportForecastRequest) -> Non
 
     max_weeks = _max_weeks_from_template()
     weekly = req.dataset.weekly[:max_weeks]
+    _clear_week_area(ws, ws.max_row)
 
     # ---- Header (horizontal fixed)
+    _write_month_header(ws, weekly)
     ws.cell(row=_cell("A2").row, column=_cell("A2").col, value=req.projectName)
     _write_row(ws, _cell("C2"), [_coerce_date(p.date) for p in weekly])
     _write_row(ws, _cell("C3"), [p.weekLabel for p in weekly])
@@ -195,10 +277,25 @@ def fill_forecast_into_template(wb: Workbook, req: ExportForecastRequest) -> Non
         mv_values[i] = milestone_map.get(w, "")
     _write_row(ws, Cell(col=_cell("C26").col, row=mv_row), mv_values)
 
-    # Note rows A27/C27 etc left as-is for now (phase 2)
+    metric_rows = [
+        ("问题提交率", "testSubmissionRate"),
+        ("问题解决率", "devResolutionRate"),
+        ("测试完成率", "testCompletionRate"),
+    ]
+    for offset, (label, metric) in enumerate(metric_rows, start=1):
+        row = mv_row + offset
+        if ws.cell(row=row, column=1).value not in (None, "", label):
+            ws.insert_rows(row)
+        ws.cell(row=row, column=1, value=label)
+        ws.cell(row=row, column=2, value="")
+        rate_map = _milestone_rates_to_map(req.dataset.milestones, metric)
+        values = []
+        for p in weekly:
+            w = _week_to_index(p.week)
+            values.append(rate_map.get(w, "") if w is not None else "")
+        _write_row(ws, Cell(col=_cell("C26").col, row=row), values)
 
     # Put a tiny export timestamp somewhere safe (optional): keep it minimal.
     # We'll put it in A1 if empty.
     if ws["A1"].value in (None, ""):
         ws["A1"].value = f"Exported at {datetime.now().isoformat(timespec='seconds')}"
-

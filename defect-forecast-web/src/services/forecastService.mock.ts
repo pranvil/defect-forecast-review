@@ -1,9 +1,21 @@
-import { forecastCreatedTeams, forecastFixedTeams, forecastWeeklyBase } from '@/data/mock/forecast'
+import { forecastWeeklyBase } from '@/data/mock/forecast'
 import { delay } from '@/services/delay'
 import { projectServiceMock } from '@/services/projectService.mock'
 import type { ForecastResult, ForecastService } from '@/services/forecastService'
 import { calculate_defects, defectInputFromParams } from '@/utils/defectCalculation'
+import {
+  allocateTeamsFromHistory,
+  buildForecastWeeklyDistribution,
+  milestoneLabelsFromParams,
+} from '@/utils/forecastDistribution'
 import { compareWeekAsc, firstDayDateOfWeek, parseYearWeek, weekIndex } from '@/utils/week'
+
+function effectiveEndWeek(paramEndWeek: string, milestones: { week: string }[]): string {
+  return milestones
+    .map((m) => m.week.trim())
+    .filter(Boolean)
+    .reduce((endWeek, week) => (compareWeekAsc(week, endWeek) > 0 ? week : endWeek), paramEndWeek)
+}
 
 export const forecastServiceMock: ForecastService = {
   async getForecastResult(input): Promise<ForecastResult> {
@@ -17,10 +29,11 @@ export const forecastServiceMock: ForecastService = {
         : historyProjects,
     )
 
+    const endWeek = effectiveEndWeek(input.params.endWeek, input.milestones)
     const startParsed = parseYearWeek(input.params.startWeek)
-    const endParsed = parseYearWeek(input.params.endWeek)
+    const endParsed = parseYearWeek(endWeek)
     const startInMock = weekIndex(input.params.startWeek)
-    const endInMock = weekIndex(input.params.endWeek)
+    const endInMock = weekIndex(endWeek)
 
     const startWeekNum = startParsed?.week ?? (startInMock >= 0 ? startInMock + 2 : 2)
     const endWeekNum = endParsed?.week ?? (endInMock >= 0 ? endInMock + 2 : 27)
@@ -37,7 +50,7 @@ export const forecastServiceMock: ForecastService = {
       fixedByWeek.set(w, p.fixed)
     }
 
-    const weekly = Array.from({ length: to - from + 1 }, (_, i) => {
+    const baseWeekly = Array.from({ length: to - from + 1 }, (_, i) => {
       const weekNum = from + i
       const created = createdByWeek.get(weekNum) ?? 0
       const fixed = fixedByWeek.get(weekNum) ?? 0
@@ -70,32 +83,34 @@ export const forecastServiceMock: ForecastService = {
       { out: [], cumCreated: 0, cumFixed: 0 },
     ).out
 
-    const sliceStart = Math.max(0, from - 2)
-    const sliceEnd = Math.min(forecastWeeklyBase.length - 1, to - 2)
-    const len = weekly.length
-    const zeros = Array.from({ length: len }, () => 0)
-
-    const createdByName = new Map(forecastCreatedTeams.map((r) => [r.team, r]))
-    const fixedByName = new Map(forecastFixedTeams.map((r) => [r.team, r]))
-
-    const createdTeams = input.enabledTestingTeams.map((team) => {
-      const row = createdByName.get(team)
-      const slicedRaw = row?.values.slice(sliceStart, sliceEnd + 1)
-      const values = slicedRaw ? slicedRaw.concat(zeros).slice(0, len) : zeros
-      return { team, group: '测试团队', values }
-    })
-
-    const fixedTeams = input.enabledDevTeams.map((team) => {
-      const row = fixedByName.get(team)
-      const slicedRaw = row?.values.slice(sliceStart, sliceEnd + 1)
-      const values = slicedRaw ? slicedRaw.concat(zeros).slice(0, len) : zeros
-      return { team, group: '开发团队', values }
-    })
-
-    const milestones = input.milestones
-      .slice()
-      .map((m) => ({ label: m.name, week: m.week.replace('26', '') }))
-      .sort((a, b) => compareWeekAsc(a.week, b.week))
+    const distribution = buildForecastWeeklyDistribution(
+      baseWeekly,
+      input.milestones,
+      calculation?.estimatedDefects ?? baseWeekly.reduce((sum, row) => sum + row.created, 0),
+    )
+    const weekly = distribution.weekly
+    const selectedHistoryNames = input.refProjects.map((row) => row.project)
+    const historyNames = selectedHistoryNames.length ? selectedHistoryNames : historyProjects.map((p) => p.name)
+    const histories = (
+      await Promise.all(
+        historyNames.map((name) =>
+          projectServiceMock.getProjectHistory(name).catch(() => null),
+        ),
+      )
+    ).filter((history): history is Awaited<ReturnType<typeof projectServiceMock.getProjectHistory>> =>
+      history !== null,
+    )
+    const teamAllocation = allocateTeamsFromHistory(
+      histories,
+      input.testingTeamConfigs ?? [],
+      input.devTeamConfigs ?? [],
+      input.enabledTestingTeams,
+      input.enabledDevTeams,
+      weekly,
+    )
+    const createdTeams = teamAllocation.createdTeams
+    const fixedTeams = teamAllocation.fixedTeams
+    const milestones = milestoneLabelsFromParams(input.milestones)
 
     const teamSummary = [
       {
@@ -136,32 +151,38 @@ export const forecastServiceMock: ForecastService = {
         mm: project.mm,
         similarity: Math.round(score * 100),
       })),
+      warnings: [...distribution.warnings, ...teamAllocation.warnings],
     }
   },
   async saveForecastVersion(req) {
     await delay(80)
-    return {
+    const row = {
       id: `mock-${crypto.randomUUID()}`,
       projectName: req.projectName,
       cycle: `${req.input.params.startWeek}-${req.input.params.endWeek}`,
       note: req.note ?? '',
       createdAt: new Date().toISOString(),
+      result: req.result,
     }
+    const rows = JSON.parse(localStorage.getItem('defectForecast.forecastVersions.v1') || '[]') as unknown[]
+    localStorage.setItem('defectForecast.forecastVersions.v1', JSON.stringify([row, ...rows]))
+    return row
   },
   async listForecastVersions(projectName) {
     await delay(60)
-    if (!projectName) return []
-    return [
-      {
-        id: `mock-${projectName}`,
-        projectName,
-        cycle: '26W2-26W27',
-        note: 'mock version',
-        createdAt: new Date().toISOString(),
-      },
-    ]
+    const rows = JSON.parse(localStorage.getItem('defectForecast.forecastVersions.v1') || '[]') as Array<{
+      id: string
+      projectName: string
+      cycle: string
+      note: string
+      createdAt: string
+      result?: ForecastResult
+    }>
+    return projectName ? rows.filter((row) => row.projectName === projectName) : rows
   },
-  async deleteForecastVersion() {
+  async deleteForecastVersion(id) {
     await delay(40)
+    const rows = JSON.parse(localStorage.getItem('defectForecast.forecastVersions.v1') || '[]') as Array<{ id: string }>
+    localStorage.setItem('defectForecast.forecastVersions.v1', JSON.stringify(rows.filter((row) => row.id !== id)))
   },
 }

@@ -4,7 +4,8 @@ import type {
   MilestoneParam,
   RefProjectRow,
 } from '@/types/forecast'
-import type { WeeklyPoint } from '@/types/project'
+import type { MilestoneLabel, WeeklyPoint } from '@/types/project'
+import type { TeamItem } from '@/types/team'
 
 export type ForecastParams = ForecastProjectParams
 
@@ -12,6 +13,8 @@ export interface ForecastInput {
   params: ForecastParams
   enabledTestingTeams: string[]
   enabledDevTeams: string[]
+  testingTeamConfigs?: TeamItem[]
+  devTeamConfigs?: TeamItem[]
   milestones: MilestoneParam[]
   refProjects: RefProjectRow[]
 }
@@ -20,7 +23,7 @@ export interface ForecastDataset {
   weekly: WeeklyPoint[]
   createdTeams: ForecastTeamRow[]
   fixedTeams: ForecastTeamRow[]
-  milestones: { label: string; week: string }[]
+  milestones: MilestoneLabel[]
 }
 
 export interface ForecastTeamSummaryRow {
@@ -46,6 +49,18 @@ export interface ForecastFactors {
   pipeline: number
 }
 
+export interface ForecastWarning {
+  type: 'milestone_conflict' | 'team_allocation'
+  severity: 'warning' | 'info'
+  message: string
+  milestone?: string
+  metric?: 'testSubmissionRate' | 'devResolutionRate'
+  currentRate?: number
+  suggestedRate?: number
+  currentWeek?: string
+  suggestedWeek?: string
+}
+
 export interface ForecastResult {
   dataset: ForecastDataset
   teamSummary: ForecastTeamSummaryRow[]
@@ -53,6 +68,7 @@ export interface ForecastResult {
   baseValue?: number
   referenceProjects?: ForecastReferenceProjectRow[]
   factors?: ForecastFactors
+  warnings?: ForecastWarning[]
 }
 
 export interface ForecastVersionRow {
@@ -61,6 +77,7 @@ export interface ForecastVersionRow {
   cycle: string
   note: string
   createdAt: string
+  result?: ForecastResult
 }
 
 export interface ForecastService {

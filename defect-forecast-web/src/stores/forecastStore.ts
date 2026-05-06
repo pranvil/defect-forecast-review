@@ -2,8 +2,12 @@ import { create } from 'zustand'
 import { initialMilestones } from '@/data/mock/milestones'
 import { initialRefProjects } from '@/data/mock/refProjects'
 import { services } from '@/services'
-import type { ForecastProjectParams, MilestoneParam, RefProjectRow } from '@/types/forecast'
-import { compareWeekAsc } from '@/utils/week'
+import type {
+  ForecastProjectParams,
+  ForecastTeamSelection,
+  MilestoneParam,
+  RefProjectRow,
+} from '@/types/forecast'
 
 export const defaultForecastParams: ForecastProjectParams = {
   newProjectName: 'Aurora NP TMO',
@@ -25,6 +29,20 @@ export const defaultForecastParams: ForecastProjectParams = {
   supportSim: 'Yes',
 }
 
+const legacyInitialMilestones: Array<Pick<MilestoneParam, 'name' | 'week' | 'date'>> = [
+  { name: 'FC checklist', week: '26W4', date: '2026-01-19' },
+  { name: 'M1-1', week: '26W5', date: '2026-01-26' },
+  { name: 'M1-2', week: '26W6', date: '2026-02-02' },
+  { name: 'M1-3', week: '26W7', date: '2026-02-09' },
+  { name: 'V1', week: '26W17', date: '2026-04-20' },
+  { name: 'V4', week: '26W23', date: '2026-06-01' },
+]
+
+const milestoneNameCollator = new Intl.Collator('zh-CN', {
+  numeric: true,
+  sensitivity: 'base',
+})
+
 function normalizeForecastParams(params: Partial<ForecastProjectParams>): ForecastProjectParams {
   const legacyStatus = params.chipsetStatus ?? defaultForecastParams.chipsetStatus
   const [legacyNewness = '', legacyVendor = ''] = legacyStatus.split('_')
@@ -41,6 +59,25 @@ function normalizeForecastParams(params: Partial<ForecastProjectParams>): Foreca
   }
 }
 
+function isLegacyInitialMilestones(milestones: MilestoneParam[]): boolean {
+  return (
+    milestones.length === legacyInitialMilestones.length &&
+    milestones.every((m, index) => {
+      const legacy = legacyInitialMilestones[index]
+      return m.name === legacy.name && m.week === legacy.week && m.date === legacy.date
+    })
+  )
+}
+
+function compareMilestoneAsc(a: MilestoneParam, b: MilestoneParam): number {
+  return milestoneNameCollator.compare(a.name, b.name)
+}
+
+function normalizeMilestones(milestones: MilestoneParam[]): MilestoneParam[] {
+  const rows = isLegacyInitialMilestones(milestones) ? initialMilestones : milestones
+  return rows.slice().sort(compareMilestoneAsc)
+}
+
 type ForecastState = {
   hydrateDefaultsFromServer: () => Promise<void>
   refProjects: RefProjectRow[]
@@ -53,6 +90,10 @@ type ForecastState = {
   addMilestone: (row: MilestoneParam) => void
   updateMilestone: (index: number, row: MilestoneParam) => void
   removeMilestone: (index: number) => void
+  teamSelection: ForecastTeamSelection
+  setTeamSelection: (next: Partial<ForecastTeamSelection>) => void
+  toggleSelectedTeam: (type: keyof ForecastTeamSelection, team: string, checked: boolean) => void
+  ensureDefaultTeamSelection: (testingTeams: string[], devTeams: string[]) => void
   params: ForecastProjectParams
   setParams: (next: Partial<ForecastState['params']>) => void
 }
@@ -75,7 +116,7 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
     const payload = await services.configService.getForecastDefaults()
     set({
       refProjects: payload.refProjects,
-      milestones: payload.milestones.slice().sort((a, b) => compareWeekAsc(a.week, b.week)),
+      milestones: normalizeMilestones(payload.milestones),
       params: normalizeForecastParams(payload.params),
     })
   },
@@ -107,14 +148,14 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
       queueMicrotask(() => saveForecastDefaults(get))
       return next
     }),
-  milestones: initialMilestones,
+  milestones: normalizeMilestones(initialMilestones),
   setMilestones: (milestones) => {
-    set({ milestones })
+    set({ milestones: normalizeMilestones(milestones) })
     saveForecastDefaults(get)
   },
   addMilestone: (row) =>
     set((s) => {
-      const next = [...s.milestones, row].slice().sort((a, b) => compareWeekAsc(a.week, b.week))
+      const next = normalizeMilestones([...s.milestones, row])
       queueMicrotask(() => saveForecastDefaults(get))
       return { milestones: next }
     }),
@@ -122,16 +163,45 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
     set((s) => {
       const next = s.milestones
         .map((x, i) => (i === index ? row : x))
-        .slice()
-        .sort((a, b) => compareWeekAsc(a.week, b.week))
+      const sorted = normalizeMilestones(next)
       queueMicrotask(() => saveForecastDefaults(get))
-      return { milestones: next }
+      return { milestones: sorted }
     }),
   removeMilestone: (index) =>
     set((s) => {
       const next = s.milestones.filter((_, i) => i !== index)
       queueMicrotask(() => saveForecastDefaults(get))
       return { milestones: next }
+    }),
+  teamSelection: { testing: [], development: [] },
+  setTeamSelection: (next) =>
+    set((s) => ({
+      teamSelection: {
+        testing: next.testing ?? s.teamSelection.testing,
+        development: next.development ?? s.teamSelection.development,
+      },
+    })),
+  toggleSelectedTeam: (type, team, checked) =>
+    set((s) => {
+      const current = new Set(s.teamSelection[type])
+      if (checked) current.add(team)
+      else current.delete(team)
+      return {
+        teamSelection: {
+          ...s.teamSelection,
+          [type]: Array.from(current),
+        },
+      }
+    }),
+  ensureDefaultTeamSelection: (testingTeams, devTeams) =>
+    set((s) => {
+      if (s.teamSelection.testing.length && s.teamSelection.development.length) return s
+      return {
+        teamSelection: {
+          testing: s.teamSelection.testing.length ? s.teamSelection.testing : testingTeams,
+          development: s.teamSelection.development.length ? s.teamSelection.development : devTeams,
+        },
+      }
     }),
   params: defaultForecastParams,
   setParams: (next) =>

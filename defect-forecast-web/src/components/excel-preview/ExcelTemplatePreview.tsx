@@ -25,6 +25,21 @@ export function ExcelTemplatePreview({
   const dates = dataset.weekly.map((x) => x.date)
   const weekLabels = dataset.weekly.map((x) => x.weekLabel)
   const weeks = dataset.weekly.map((x) => x.week)
+  const rateByWeek = (
+    metric: 'devResolutionRate' | 'testCompletionRate' | 'testSubmissionRate',
+  ) => {
+    const map = new Map<string, string>()
+    for (const milestone of dataset.milestones ?? []) {
+      const value = milestone[metric]
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue
+      const current = map.get(milestone.week)
+      map.set(milestone.week, current ? `${current} / ${value}%` : `${value}%`)
+    }
+    return map
+  }
+  const testSubmissionRateByWeek = rateByWeek('testSubmissionRate')
+  const devResolutionRateByWeek = rateByWeek('devResolutionRate')
+  const testCompletionRateByWeek = rateByWeek('testCompletionRate')
 
   const monthColor: Record<number, string> = {
     1: 'bg-sky-100',
@@ -179,28 +194,27 @@ export function ExcelTemplatePreview({
                 <tr className="bg-violet-50">
                   <td className="border p-2">问题提交率</td>
                   <td className="border p-2" />
-                  {weeks.map((w, idx) => (
+                  {weeks.map((w) => (
                     <td key={w} className="border p-2 text-center">
-                      {idx === 4
-                        ? '30%'
-                        : idx === 9
-                          ? '70%'
-                          : idx === 11
-                            ? '85%'
-                            : idx === 13
-                              ? '90%'
-                              : idx === 20
-                                ? '99%'
-                                : ''}
+                      {testSubmissionRateByWeek.get(w) ?? ''}
                     </td>
                   ))}
                 </tr>
                 <tr className="bg-rose-50">
                   <td className="border p-2">问题解决率</td>
                   <td className="border p-2" />
-                  {weeks.map((w, idx) => (
+                  {weeks.map((w) => (
                     <td key={w} className="border p-2 text-center">
-                      {idx === 4 ? '50%' : idx === 9 ? '80%' : idx === 11 ? '93%' : ''}
+                      {devResolutionRateByWeek.get(w) ?? ''}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-emerald-50">
+                  <td className="border p-2">测试完成率</td>
+                  <td className="border p-2" />
+                  {weeks.map((w) => (
+                    <td key={w} className="border p-2 text-center">
+                      {testCompletionRateByWeek.get(w) ?? ''}
                     </td>
                   ))}
                 </tr>

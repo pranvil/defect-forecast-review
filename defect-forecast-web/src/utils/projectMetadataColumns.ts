@@ -32,7 +32,6 @@ export const PROJECT_METADATA_COLUMNS: ProjectMetadataColumn[] = [
   { id: 'displayName', label: '项目名' },
   { id: 'cycle', label: '周期' },
   { id: 'defects', label: 'Defects', align: 'right' },
-  { id: 'teams', label: '团队', align: 'right' },
   { id: 'projectCategory', label: '项目类别' },
   { id: 'region', label: '区域' },
   { id: 'os', label: 'OS' },

@@ -9,11 +9,11 @@ export interface MilestoneParam {
   week: string
   date: string
   /** 开发解决率（%），可选 */
-  devResolutionRate?: number
+  devResolutionRate?: number | null
   /** 测试完成率（%），可选 */
-  testCompletionRate?: number
+  testCompletionRate?: number | null
   /** 测试提交率（%），可选 */
-  testSubmissionRate?: number
+  testSubmissionRate?: number | null
 }
 
 export interface ForecastTeamRow {
@@ -40,4 +40,9 @@ export interface ForecastProjectParams {
   frQuantity: number
   mm: number
   supportSim: 'Yes' | 'No'
+}
+
+export interface ForecastTeamSelection {
+  testing: string[]
+  development: string[]
 }

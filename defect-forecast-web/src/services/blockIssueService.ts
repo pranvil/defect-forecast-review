@@ -4,6 +4,7 @@ import type { JiraFetchRequest } from '@/services/jiraService'
 export interface BlockIssueRow {
   key: string
   summary: string
+  status: string
   ipr?: number | null
   mainCeaComment: string
   additionalCeaComment: string
@@ -23,6 +24,8 @@ export interface BlockIssueMarkRequest extends JiraFetchRequest {
   additionalCeaComment: string
   deadline: string
   comment: string
+  allowExistingMainCeaComment?: boolean
+  allowOtherStatuses?: boolean
 }
 
 export interface BlockIssueMarkResult {
@@ -43,7 +46,7 @@ export interface BlockIssueBatchResult {
 export interface BlockIssueService {
   search(req: JiraFetchRequest): Promise<BlockIssueSearchResult>
   mark(req: BlockIssueMarkRequest): Promise<BlockIssueMarkResult>
-  batchMark(params: { req: JiraFetchRequest; file: File }): Promise<BlockIssueBatchResult>
+  batchMark(params: { req: JiraFetchRequest; file: File; allowExistingMainCeaComment?: boolean; allowOtherStatuses?: boolean }): Promise<BlockIssueBatchResult>
   getTemplateUrl(): string
 }
 
@@ -54,16 +57,18 @@ export const blockIssueServiceApi: BlockIssueService = {
   async mark(req) {
     return httpPost<BlockIssueMarkRequest, BlockIssueMarkResult>('/api/block-issues/mark', req)
   },
-  async batchMark({ req, file }) {
+  async batchMark({ req, file, allowExistingMainCeaComment = false, allowOtherStatuses = false }) {
     const form = new FormData()
     form.set('file', file)
-    form.set('projectKey', req.projectKey)
+    form.set('projectKey', req.projectKey || 'BLOCK')
     form.set('baseUrl', req.baseUrl)
     form.set('authType', req.authType)
     form.set('username', req.username)
     form.set('token', req.token)
     form.set('verifySsl', String(req.verifySsl))
     form.set('timeoutSec', String(req.timeoutSec))
+    form.set('allowExistingMainCeaComment', String(allowExistingMainCeaComment))
+    form.set('allowOtherStatuses', String(allowOtherStatuses))
     const res = await fetch(`${API_BASE}/api/block-issues/batch`, {
       method: 'POST',
       body: form,
