@@ -3,6 +3,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -47,6 +48,7 @@ import { services } from '@/services'
 import { ProjectPicker } from '@/components/common/ProjectPicker'
 import { useForecastStore } from '@/stores/forecastStore'
 import { useTeamStore } from '@/stores/teamStore'
+import { adjustCell, adjustGrandTotal, adjustTeamTotal } from '@/utils/datasetAdjustment'
 import {
   ensureMilestoneDateIso,
   formatIsoDateLocal,
@@ -83,6 +85,36 @@ import {
 import type { ForecastResult } from '@/services/forecastService'
 import type { MilestoneLabel } from '@/types/project'
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
+
+function AdjustableInput({ value, onChange, className }: { value: number, onChange: (val: number) => void, className?: string }) {
+  const [local, setLocal] = React.useState<string>(String(value))
+  
+  React.useEffect(() => {
+    setLocal(String(value))
+  }, [value])
+  
+  return (
+    <Input
+      type="number"
+      className={className}
+      value={local}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={() => {
+        const val = Math.trunc(Number(local))
+        if (!isNaN(val) && val >= 0) {
+          onChange(val)
+        } else {
+          setLocal(String(value))
+        }
+      }}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
 
 type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
 
@@ -268,6 +300,7 @@ export function ParamsPage() {
     source: '手工添加',
   })
   const [forecastResult, setForecastResult] = React.useState<ForecastResult | null>(null)
+  const [originalDataset, setOriginalDataset] = React.useState<ForecastDataset | null>(null)
   const [forecastError, setForecastError] = React.useState('')
   const [isForecasting, setIsForecasting] = React.useState(false)
   const [shouldScrollToForecast, setShouldScrollToForecast] = React.useState(false)
@@ -301,6 +334,7 @@ export function ParamsPage() {
     if (firstMilestone && startWeek && compareWeekAsc(firstMilestone.week, startWeek) !== 0) {
       const message = `项目开始时间是 ${startWeek}，但第一个有周期的节点 ${firstMilestone.name} 是 ${firstMilestone.week}。请先修改项目开始时间或节点周期，保持两者一致。`
       setForecastResult(null)
+      setOriginalDataset(null)
       setForecastError(message)
       toast('开始时间冲突', { description: message })
       return
@@ -311,11 +345,13 @@ export function ParamsPage() {
       .getForecastResult(forecastInput)
       .then((result) => {
         setForecastResult(result)
+        setOriginalDataset(result.dataset)
         setShouldScrollToForecast(true)
         toast('预测已完成', { description: `预估总数 ${result.estimatedDefects ?? result.dataset.weekly.at(-1)?.cumCreated ?? 0}` })
       })
       .catch((e: unknown) => {
         setForecastResult(null)
+        setOriginalDataset(null)
         setForecastError(e instanceof Error ? e.message : '预测服务调用失败')
       })
       .finally(() => setIsForecasting(false))
@@ -462,8 +498,8 @@ export function ParamsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-3 xl:auto-rows-fr">
-          <Card className="h-full rounded-2xl">
+        <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12 xl:auto-rows-fr">
+          <Card className="h-full rounded-2xl xl:col-span-3">
             <CardHeader>
               <CardTitle>项目基础信息</CardTitle>
             </CardHeader>
@@ -584,7 +620,7 @@ export function ParamsPage() {
               </CardContent>
             </Card>
 
-            <Card className="h-full rounded-2xl">
+            <Card className="h-full rounded-2xl xl:col-span-4">
               <CardHeader>
                 <CardTitle>技术变量</CardTitle>
               </CardHeader>
@@ -745,7 +781,7 @@ export function ParamsPage() {
               </CardContent>
             </Card>
 
-            <Card className="h-full rounded-2xl">
+            <Card className="h-full rounded-2xl xl:col-span-5">
               <CardHeader>
                 <CardTitle>节点信息</CardTitle>
                 <CardDescription>默认节点已预置；周期为空的节点只作为模板。</CardDescription>
@@ -758,9 +794,9 @@ export function ParamsPage() {
                         <TableHead className="w-[96px]">节点名</TableHead>
                         <TableHead className="w-[92px]">周期</TableHead>
                         <TableHead className="w-[132px]">日期</TableHead>
+                        <TableHead className="whitespace-nowrap">测试提交率</TableHead>
                         <TableHead className="whitespace-nowrap">开发解决率</TableHead>
                         <TableHead className="whitespace-nowrap">测试完成率</TableHead>
-                        <TableHead className="whitespace-nowrap">测试提交率</TableHead>
                         <TableHead>操作</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -790,7 +826,7 @@ export function ParamsPage() {
                               onBlur={(e) => {
                                 const week = e.target.value.trim()
                                 if (week === m.week) return
-                                updateInlineMilestoneSchedule(idx, week, m.date)
+                                updateInlineMilestoneSchedule(idx, week, '')
                               }}
                             />
                           </TableCell>
@@ -801,8 +837,15 @@ export function ParamsPage() {
                               onBlur={(e) => {
                                 const dateText = e.target.value.trim()
                                 if (dateText === m.date) return
-                                updateInlineMilestoneSchedule(idx, m.week, dateText)
+                                updateInlineMilestoneSchedule(idx, '', dateText)
                               }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              defaultValue={formatOptionalPercent(m.testSubmissionRate) === '—' ? '' : formatOptionalPercent(m.testSubmissionRate)}
+                              className="h-8 min-w-[84px] rounded-lg px-2"
+                              onBlur={(e) => updateInlineMilestoneRate(idx, 'testSubmissionRate', e.target.value)}
                             />
                           </TableCell>
                           <TableCell>
@@ -817,13 +860,6 @@ export function ParamsPage() {
                               defaultValue={formatOptionalPercent(m.testCompletionRate) === '—' ? '' : formatOptionalPercent(m.testCompletionRate)}
                               className="h-8 min-w-[84px] rounded-lg px-2"
                               onBlur={(e) => updateInlineMilestoneRate(idx, 'testCompletionRate', e.target.value)}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              defaultValue={formatOptionalPercent(m.testSubmissionRate) === '—' ? '' : formatOptionalPercent(m.testSubmissionRate)}
-                              className="h-8 min-w-[84px] rounded-lg px-2"
-                              onBlur={(e) => updateInlineMilestoneRate(idx, 'testSubmissionRate', e.target.value)}
                             />
                           </TableCell>
                           <TableCell>
@@ -1041,9 +1077,9 @@ export function ParamsPage() {
                   <TableHead>节点名</TableHead>
                   <TableHead>周期</TableHead>
                   <TableHead>日期</TableHead>
+                  <TableHead className="whitespace-nowrap">测试提交率</TableHead>
                   <TableHead className="whitespace-nowrap">开发解决率</TableHead>
                   <TableHead className="whitespace-nowrap">测试完成率</TableHead>
-                  <TableHead className="whitespace-nowrap">测试提交率</TableHead>
                   <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1053,9 +1089,9 @@ export function ParamsPage() {
                     <TableCell>{m.name}</TableCell>
                     <TableCell>{m.week}</TableCell>
                     <TableCell className="text-slate-500">{ensureMilestoneDateIso(m)}</TableCell>
+                    <TableCell className="text-slate-600">{formatOptionalPercent(m.testSubmissionRate)}</TableCell>
                     <TableCell className="text-slate-600">{formatOptionalPercent(m.devResolutionRate)}</TableCell>
                     <TableCell className="text-slate-600">{formatOptionalPercent(m.testCompletionRate)}</TableCell>
-                    <TableCell className="text-slate-600">{formatOptionalPercent(m.testSubmissionRate)}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">
                         <Button
@@ -1331,23 +1367,45 @@ export function ParamsPage() {
           )}
 
           <Card className="rounded-2xl">
-            <CardHeader>
-              <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
-            </CardHeader>
-            <CardContent className="h-[340px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={forecastDataset.weekly}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="weekLabel" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Area type="monotone" dataKey="created" stroke="#0284c7" fill="#7dd3fc" fillOpacity={0.25} strokeWidth={2} />
-                  <Area type="monotone" dataKey="fixed" stroke="#16a34a" fill="#86efac" fillOpacity={0.2} strokeWidth={2} />
-                  <Line type="monotone" dataKey="backlog" stroke="#0f172a" strokeWidth={2.5} dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </CardContent>
+            <Tabs defaultValue="area" className="w-full">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
+                <TabsList className="rounded-2xl">
+                  <TabsTrigger value="area">面积图</TabsTrigger>
+                  <TabsTrigger value="bar">柱形图</TabsTrigger>
+                </TabsList>
+              </CardHeader>
+              <CardContent className="h-[340px]">
+                <TabsContent value="area" className="mt-0 h-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={forecastDataset.weekly}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="weekLabel" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Area type="monotone" dataKey="created" name="Arrive_forecast" stroke="#0284c7" fill="#7dd3fc" fillOpacity={0.25} strokeWidth={2} />
+                      <Area type="monotone" dataKey="fixed" name="Resolve plan" stroke="#16a34a" fill="#86efac" fillOpacity={0.2} strokeWidth={2} />
+                      <Line type="monotone" dataKey="backlog" name="Backlog_plan" stroke="#0f172a" strokeWidth={2.5} dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </TabsContent>
+                <TabsContent value="bar" className="mt-0 h-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={forecastDataset.weekly}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="weekLabel" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="created" name="Arrive_forecast" fill="#0284c7" />
+                      <Bar dataKey="fixed" name="Resolve plan" fill="#eab308" />
+                      <Line type="monotone" dataKey="backlog" name="Backlog_plan" stroke="#0ea5e9" strokeWidth={2.5} dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </TabsContent>
+              </CardContent>
+            </Tabs>
           </Card>
 
           <Tabs defaultValue="excel" className="w-full">
@@ -1387,10 +1445,30 @@ export function ParamsPage() {
               </Card>
             </TabsContent>
             <TabsContent value="team" className="mt-4">
+              <div className="mb-4 flex items-center justify-between rounded-2xl border bg-white p-4">
+                <div>
+                  <h3 className="font-semibold">微调全局参数</h3>
+                  <p className="text-xs text-slate-500">修改总数会自动等比缩放所有团队和周期的数据。</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label>预测 Bug 总数</Label>
+                  <AdjustableInput
+                    value={forecastDataset.weekly[forecastDataset.weekly.length - 1]?.cumCreated ?? 0}
+                    onChange={(val) => {
+                      if (forecastResult && originalDataset) {
+                        setForecastResult({ ...forecastResult, dataset: adjustGrandTotal(originalDataset, val) })
+                      }
+                    }}
+                    className="w-32"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <Card className="rounded-2xl">
                   <CardHeader>
                     <CardTitle>测试团队预测 Created</CardTitle>
+                    <CardDescription>修改单个团队总数时，将自动从同类团队扣补，保持总数不变。</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Table>
@@ -1404,7 +1482,20 @@ export function ParamsPage() {
                         {forecastDataset.createdTeams.map((row) => (
                           <TableRow key={row.team}>
                             <TableCell className="font-medium">{row.team}</TableCell>
-                            <TableCell>{row.values.reduce((sum, value) => sum + value, 0)}</TableCell>
+                            <TableCell>
+                              <AdjustableInput
+                                className="w-24"
+                                value={row.values.reduce((sum, value) => sum + value, 0)}
+                                onChange={(val) => {
+                                  if (forecastResult) {
+                                    setForecastResult({
+                                      ...forecastResult,
+                                      dataset: adjustTeamTotal(forecastDataset, row.team, val, 'created'),
+                                    })
+                                  }
+                                }}
+                              />
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1414,6 +1505,7 @@ export function ParamsPage() {
                 <Card className="rounded-2xl">
                   <CardHeader>
                     <CardTitle>开发团队预测 Fixed</CardTitle>
+                    <CardDescription>修改单个团队总数时，将自动从同类团队扣补，保持总数不变。</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Table>
@@ -1427,7 +1519,20 @@ export function ParamsPage() {
                         {forecastDataset.fixedTeams.map((row) => (
                           <TableRow key={row.team}>
                             <TableCell className="font-medium">{row.team}</TableCell>
-                            <TableCell>{row.values.reduce((sum, value) => sum + value, 0)}</TableCell>
+                            <TableCell>
+                              <AdjustableInput
+                                className="w-24"
+                                value={row.values.reduce((sum, value) => sum + value, 0)}
+                                onChange={(val) => {
+                                  if (forecastResult) {
+                                    setForecastResult({
+                                      ...forecastResult,
+                                      dataset: adjustTeamTotal(forecastDataset, row.team, val, 'fixed'),
+                                    })
+                                  }
+                                }}
+                              />
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1439,10 +1544,22 @@ export function ParamsPage() {
             <TabsContent value="excel" className="mt-4">
               <Card className="rounded-2xl">
                 <CardHeader>
-                  <CardTitle>Excel 模板预览</CardTitle>
+                  <CardTitle>Excel 模板预览与极致调整</CardTitle>
+                  <CardDescription>在这里可以直接修改单元格的数据，所有更改将自动汇总至团队和项目总计中。</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ExcelTemplatePreview projectName={params.newProjectName} dataset={forecastDataset} />
+                  <ExcelTemplatePreview
+                    projectName={params.newProjectName}
+                    dataset={forecastDataset}
+                    onCellChange={(team, weekIndex, newValue, type) => {
+                      if (forecastResult) {
+                        setForecastResult({
+                          ...forecastResult,
+                          dataset: adjustCell(forecastDataset, team, weekIndex, newValue, type),
+                        })
+                      }
+                    }}
+                  />
                 </CardContent>
               </Card>
             </TabsContent>

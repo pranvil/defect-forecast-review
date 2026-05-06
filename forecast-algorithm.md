@@ -63,24 +63,25 @@ baseValue = avg(top3.defects)
 
 | 系数 | 规则 |
 | --- | --- |
-| 芯片新旧 | New 为 1.2，否则 1 |
-| 运营商 | `1 + 运营商数量 * 0.1` |
-| 用户测试 | 0 个为 1；1 个为 1.1；每多 1 个增加 0.05，最多增加到 1.25 |
-| SIM | 不支持 SIM 为 0.8，支持为 1 |
+| 芯片新旧 | New 为 0.2，否则 0 |
+| 运营商 | `(运营商数量 - 1) * 0.1` |
+| 用户测试 | 0 个为 0；1 个为 0.1；每多 1 个增加 0.05，最多增加到 0.25 |
+| SIM | 不支持 SIM 为 -0.2，支持为 0 |
 | 投入人力 MM | 与参考项目平均 MM 对比，增加值最多 0.2 |
-| 流水线 | 全部 1.08；冒烟 1.01；无冒烟 0.99；不部署/无 0.92 |
+| 流水线 | 全部 0.08；冒烟 0.01；无冒烟 -0.01；不部署/无 -0.08 |
 
 最终公式：
 
 ```text
 estimatedDefects =
   round(baseValue
-    * chipset
-    * operators
-    * userPrograms
-    * supportSim
-    * mm
-    * pipeline)
+    * max(0.1, 1
+      + chipset
+      + operators
+      + userPrograms
+      + supportSim
+      + mm
+      + pipeline))
 ```
 
 如果找不到相似项目，前端 mock 会退回使用基础周数据合计；后端预测依赖历史库可用数据。
@@ -153,6 +154,7 @@ constraint.rate = 测试提交率
 随后使用正态分布的反函数推断峰值位置：
 
 ```text
+rate = clamp(rate, 1, 99)
 peakIndex ≈ constraint.index - sigma * inverseNormalCdf(rate / 100)
 sigma = max(1.5, 周数 / 5)
 ```
@@ -185,7 +187,7 @@ finalCumCreated = estimatedDefects
 
 然后按约束点分段，把每段增量按钟形权重分配到各周。
 
-分配后会做整数化处理，保证每段整数求和等于该段目标增量，最终累计 created 等于预测总 defect 数量。
+分配后会做整数化处理，保证每段整数求和等于该段目标增量，最终累计 created 等于预测总 defect 数量。由于强行分段找齐目标，部分节点前后可能会出现曲线不平滑（锯齿形突变）的现象，但优先保证了节点约束的绝对满足。
 
 ## 6. Fixed 每周分布
 
@@ -225,19 +227,12 @@ fixedWeight[i] =
 
 ### 6.3 Backlog 保护
 
-为了避免 fixed 过早追平 created，导致长时间 backlog 为 0，系统会为中间阶段保留一个 backlog 缓冲。
-
-缓冲按正弦曲线生成：
-
-```text
-peakReserve = max(1, round(estimatedDefects * 0.1))
-reserve[i] = peakReserve * sin(pi * i / (length - 1))
-```
+只要保证 backlog 为非负数（即累计 fixed 不超过累计 created），且在最终周收敛到 0 即可。系统不再强制用正弦曲线保留多余的缓冲池，完全尊重用户设定的各节点解决率目标。
 
 中间周的 fixed 累计上限为：
 
 ```text
-maxCumFixed[i] = cumCreated[i] - reserve[i]
+maxCumFixed[i] = cumCreated[i]
 ```
 
 最终周不保留缓冲：
@@ -345,12 +340,12 @@ Fixed 分配到开发团队：
 
 每周分配时按比例拆分，并做整数化处理，保证各 team 当周合计等于该周总 created/fixed。
 
-### 9.5 缺失兜底
+### 9.5 缺失报错阻断
 
-如果当前参考项目没有可用的 team 历史占比：
+如果新勾选的团队在当前参考项目（历史数据）中没有可用的 team 历史占比：
 
-- 系统会在当前勾选团队内均分。
-- 同时给出提醒，提示用户确认是否接受均分。
+- 系统会**抛出异常报错并阻断预测**。
+- 提示用户：“勾选的团队 [X] 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。”
 
 ## 10. Excel 预览与真实导出
 

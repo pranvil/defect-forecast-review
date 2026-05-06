@@ -8,12 +8,14 @@ type ExcelTemplatePreviewProps = {
     'weekly' | 'createdTeams' | 'fixedTeams' | 'milestones'
   >
   compact?: boolean
+  onCellChange?: (team: string, weekIndex: number, newValue: number, type: 'created' | 'fixed') => void
 }
 
 export function ExcelTemplatePreview({
   projectName,
   dataset,
   compact = false,
+  onCellChange,
 }: ExcelTemplatePreviewProps) {
   const createdRows = dataset.createdTeams ?? []
   const fixedRows = dataset.fixedTeams ?? []
@@ -116,7 +118,16 @@ export function ExcelTemplatePreview({
                 <td className="border p-2">{row.team}</td>
                 {row.values.map((value, idx) => (
                   <td key={idx} className="border p-2 text-center">
-                    {value}
+                    {onCellChange ? (
+                      <input
+                        type="number"
+                        className="w-12 text-center bg-transparent outline-none hover:bg-slate-100 focus:bg-slate-100"
+                        value={value}
+                        onChange={(e) => onCellChange(row.team, idx, Math.trunc(Number(e.target.value || 0)), 'created')}
+                      />
+                    ) : (
+                      value
+                    )}
                   </td>
                 ))}
               </tr>
@@ -145,7 +156,16 @@ export function ExcelTemplatePreview({
                 <td className="border p-2">{row.team}</td>
                 {row.values.map((value, idx) => (
                   <td key={idx} className="border p-2 text-center">
-                    {value}
+                    {onCellChange ? (
+                      <input
+                        type="number"
+                        className="w-12 text-center bg-transparent outline-none hover:bg-slate-100 focus:bg-slate-100"
+                        value={value}
+                        onChange={(e) => onCellChange(row.team, idx, Math.trunc(Number(e.target.value || 0)), 'fixed')}
+                      />
+                    ) : (
+                      value
+                    )}
                   </td>
                 ))}
               </tr>

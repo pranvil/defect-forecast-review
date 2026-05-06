@@ -1241,12 +1241,14 @@ def _predict_defect_total(input_data: ForecastInput) -> tuple[int, int, list[dic
     factors = _forecast_factors(input_data, top_projects)
     estimated = round(
         base_value
-        * factors["chipset"]
-        * factors["operators"]
-        * factors["userPrograms"]
-        * factors["supportSim"]
-        * factors["mm"]
-        * factors["pipeline"]
+        * max(0.1, 1 
+              + (factors["chipset"] - 1) 
+              + (factors["operators"] - 1) 
+              + (factors["userPrograms"] - 1) 
+              + (factors["supportSim"] - 1) 
+              + (factors["mm"] - 1) 
+              + (factors["pipeline"] - 1)
+        )
     )
     reference_projects = [
         {
@@ -1473,7 +1475,7 @@ def _collect_rate_constraints(
                 "milestone": milestone.name,
                 "week": milestone.week,
                 "index": index,
-                "rate": max(0.0, min(100.0, float(rate))),
+                "rate": max(1.0, min(99.0, float(rate))),
                 "metric": metric,
             }
         )
@@ -1648,18 +1650,13 @@ def _build_forecast_weekly_distribution(
         }
         for constraint in fixed_constraints
     ]
-    reserve = _backlog_reserve_by_index(target, len(base_weekly))
-    fixed_max_cum = [
-        cum if idx == len(base_weekly) - 1 else max(0, cum - (reserve[idx] if idx < len(reserve) else 0))
-        for idx, cum in enumerate(created_cum)
-    ]
     fixed_weights = [
         (created[idx - 1] if idx > 0 else 0) + (created[idx - 2] if idx > 1 else 0) * 0.8 + 1
         for idx in range(len(created))
     ]
     cap_warnings: list[ForecastWarning] = []
     fixed = _enforce_fixed_availability(
-        _distribute_by_constraints(target, fixed_weights, fixed_constraints_by_created, fixed_max_cum, cap_warnings),
+        _distribute_by_constraints(target, fixed_weights, fixed_constraints_by_created, created_cum, cap_warnings),
         created,
     )
     weekly: list[WeeklyPoint] = []
@@ -1741,15 +1738,10 @@ def _allocate_teams_from_history(
             return []
         totals = _team_totals(histories, field, team_configs)
         selected_total = sum(totals.get(team, 0) for team in teams)
-        if selected_total <= 0:
-            warnings.append(
-                ForecastWarning(
-                    type="team_allocation",
-                    severity="warning",
-                    message=f"当前参考项目没有可用的{label}历史占比，已在当前勾选的 {len(teams)} 个{label}内均分，请确认是否接受该分配方式。",
-                )
-            )
-            return [1 / len(teams) for _ in teams]
+        missing_teams = [team for team in teams if totals.get(team, 0) == 0]
+        if missing_teams:
+            names = ", ".join(missing_teams)
+            raise ValueError(f"勾选的{label} '{names}' 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。")
         return [totals.get(team, 0) / selected_total for team in teams]
 
     created_ratios = ratios_for(testing_teams, "createdTeams", testing_team_configs, "测试团队")

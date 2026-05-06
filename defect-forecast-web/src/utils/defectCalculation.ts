@@ -224,7 +224,16 @@ export function calculate_defects(
   }
 
   return {
-    estimatedDefects: Math.round(baseValue * chipset * operators * factors.userPrograms * supportSim * factors.mm * pipeline),
+    estimatedDefects: Math.round(
+      baseValue * Math.max(0.1, 1 +
+        (chipset - 1) +
+        (operators - 1) +
+        (factors.userPrograms - 1) +
+        (supportSim - 1) +
+        (factors.mm - 1) +
+        (pipeline - 1)
+      )
+    ),
     baseValue: Math.round(baseValue),
     topProjects,
     factors,

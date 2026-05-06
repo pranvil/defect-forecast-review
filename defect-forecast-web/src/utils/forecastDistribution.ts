@@ -112,7 +112,7 @@ function collectConstraints(
       (x): x is Constraint =>
         x.index >= 0 && typeof x.rate === 'number' && Number.isFinite(x.rate),
     )
-    .map((x) => ({ ...x, rate: Math.min(100, Math.max(0, x.rate)) }))
+    .map((x) => ({ ...x, rate: Math.min(99, Math.max(1, x.rate)) }))
     .sort((a, b) => a.index - b.index)
 }
 
@@ -221,14 +221,6 @@ function distributeByConstraints(
   return values
 }
 
-function backlogReserveByIndex(total: number, length: number): number[] {
-  if (length <= 1 || total <= 0) return Array.from({ length }, () => 0)
-  const peakReserve = Math.max(1, Math.round(total * 0.1))
-  return Array.from({ length }, (_, index) => {
-    if (index === 0 || index === length - 1) return 0
-    return Math.round(peakReserve * Math.sin((Math.PI * index) / (length - 1)))
-  })
-}
 
 function enforceFixedAvailability(fixed: number[], created: number[]): number[] {
   const out = fixed.slice()
@@ -264,13 +256,8 @@ export function buildForecastWeeklyDistribution(
     ...constraint,
     targetCum: Math.round(((createdCum[constraint.index] ?? 0) * constraint.rate) / 100),
   }))
-  const reserve = backlogReserveByIndex(total, baseWeekly.length)
-  const fixedMaxCum = createdCum.map((cum, index) => {
-    if (index === baseWeekly.length - 1) return cum
-    return Math.max(0, cum - (reserve[index] ?? 0))
-  })
   const fixedWeights = created.map((_, index) => (created[index - 1] ?? 0) + (created[index - 2] ?? 0) * 0.8 + 1)
-  const fixedRaw = distributeByConstraints(total, fixedWeights, fixedConstraintsByCreated, fixedMaxCum, capWarnings)
+  const fixedRaw = distributeByConstraints(total, fixedWeights, fixedConstraintsByCreated, createdCum, capWarnings)
   const fixed = enforceFixedAvailability(fixedRaw, created)
 
   let cumCreated = 0
@@ -360,13 +347,9 @@ export function allocateTeamsFromHistory(
     if (!teams.length) return []
     const totals = teamTotals(histories, field, configs)
     const selectedTotal = teams.reduce((sum, team) => sum + (totals.get(team) ?? 0), 0)
-    if (selectedTotal <= 0) {
-      warnings.push({
-        type: 'team_allocation',
-        severity: 'warning',
-        message: `当前参考项目没有可用的${label}历史占比，已在当前勾选的 ${teams.length} 个${label}内均分，请确认是否接受该分配方式。`,
-      })
-      return teams.map(() => 1 / teams.length)
+    const missingTeams = teams.filter((team) => (totals.get(team) ?? 0) === 0)
+    if (missingTeams.length > 0) {
+      throw new Error(`勾选的${label} "${missingTeams.join(', ')}" 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。`)
     }
     return teams.map((team) => (totals.get(team) ?? 0) / selectedTotal)
   }

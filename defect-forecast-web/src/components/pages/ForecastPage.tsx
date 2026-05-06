@@ -11,6 +11,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import {
   Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -179,43 +180,75 @@ export function ForecastPage() {
 
       <div className="grid grid-cols-1 gap-6">
         <Card className="rounded-2xl">
-          <CardHeader>
-            <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[340px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={dataset.weekly}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="weekLabel" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Area
-                  type="monotone"
-                  dataKey="created"
-                  stroke="#0284c7"
-                  fill="#7dd3fc"
-                  fillOpacity={0.25}
-                  strokeWidth={2}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="fixed"
-                  stroke="#16a34a"
-                  fill="#86efac"
-                  fillOpacity={0.2}
-                  strokeWidth={2}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="backlog"
-                  stroke="#0f172a"
-                  strokeWidth={2.5}
-                  dot={false}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </CardContent>
+          <Tabs defaultValue="area" className="w-full">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
+              <TabsList className="rounded-2xl">
+                <TabsTrigger value="area">面积图</TabsTrigger>
+                <TabsTrigger value="bar">柱形图</TabsTrigger>
+              </TabsList>
+            </CardHeader>
+            <CardContent className="h-[340px]">
+              <TabsContent value="area" className="mt-0 h-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={dataset.weekly}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="weekLabel" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Area
+                      type="monotone"
+                      dataKey="created"
+                      name="Arrive_forecast"
+                      stroke="#0284c7"
+                      fill="#7dd3fc"
+                      fillOpacity={0.25}
+                      strokeWidth={2}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="fixed"
+                      name="Resolve plan"
+                      stroke="#16a34a"
+                      fill="#86efac"
+                      fillOpacity={0.2}
+                      strokeWidth={2}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="backlog"
+                      name="Backlog_plan"
+                      stroke="#0f172a"
+                      strokeWidth={2.5}
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </TabsContent>
+              <TabsContent value="bar" className="mt-0 h-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={dataset.weekly}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="weekLabel" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="created" name="Arrive_forecast" fill="#0284c7" />
+                    <Bar dataKey="fixed" name="Resolve plan" fill="#eab308" />
+                    <Line
+                      type="monotone"
+                      dataKey="backlog"
+                      name="Backlog_plan"
+                      stroke="#0ea5e9"
+                      strokeWidth={2.5}
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </TabsContent>
+            </CardContent>
+          </Tabs>
         </Card>
 
       </div>
