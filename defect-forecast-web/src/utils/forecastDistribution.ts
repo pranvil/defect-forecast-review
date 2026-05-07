@@ -4,6 +4,8 @@ import type { ProjectHistory, WeeklyPoint } from '@/types/project'
 import type { TeamItem } from '@/types/team'
 import { compareWeekAsc } from '@/utils/week'
 
+const USER_PROGRAM_TEST_TEAM = 'Hera/Usersupport/APRUUT'
+
 const CONFLICT_THRESHOLD_PERCENT = 12
 
 type RateMetric = 'testSubmissionRate' | 'devResolutionRate'
@@ -336,8 +338,12 @@ export function allocateTeamsFromHistory(
   selectedTestingTeams: string[],
   selectedDevTeams: string[],
   weekly: WeeklyPoint[],
+  hasUserPrograms = true,
 ): { createdTeams: ForecastTeamRow[]; fixedTeams: ForecastTeamRow[]; warnings: ForecastWarning[] } {
   const warnings: ForecastWarning[] = []
+  const effectiveTestingTeams = selectedTestingTeams.filter(
+    (team) => hasUserPrograms || team.trim() !== USER_PROGRAM_TEST_TEAM,
+  )
   const buildRatios = (
     teams: string[],
     field: 'createdTeams' | 'fixedTeams',
@@ -354,11 +360,11 @@ export function allocateTeamsFromHistory(
     return teams.map((team) => (totals.get(team) ?? 0) / selectedTotal)
   }
 
-  const createdRatios = buildRatios(selectedTestingTeams, 'createdTeams', testingTeamConfigs, '测试团队')
+  const createdRatios = buildRatios(effectiveTestingTeams, 'createdTeams', testingTeamConfigs, '测试团队')
   const fixedRatios = buildRatios(selectedDevTeams, 'fixedTeams', devTeamConfigs, '开发团队')
   return {
     createdTeams: splitWeeklyByRatios(
-      selectedTestingTeams,
+      effectiveTestingTeams,
       weekly.map((row) => row.created),
       createdRatios,
       '测试团队',

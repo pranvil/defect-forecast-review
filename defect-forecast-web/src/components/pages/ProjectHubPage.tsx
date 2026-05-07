@@ -1,7 +1,6 @@
-import { Database, FolderKanban, LayoutList } from 'lucide-react'
+import { FolderKanban, LayoutList } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HistoryPage } from '@/components/pages/HistoryPage'
-import { JiraPage } from '@/components/pages/JiraPage'
 import { useProjectStore } from '@/stores/projectStore'
 
 export function ProjectHubPage() {
@@ -32,16 +31,6 @@ export function ProjectHubPage() {
           <Button
             type="button"
             size="sm"
-            variant={projectHubView === 'import' ? 'secondary' : 'ghost'}
-            className="rounded-xl"
-            onClick={() => setProjectHubView('import')}
-          >
-            <Database className="mr-1.5 h-4 w-4" />
-            导入项目
-          </Button>
-          <Button
-            type="button"
-            size="sm"
             variant={projectHubView === 'detail' ? 'secondary' : 'ghost'}
             className="rounded-xl"
             onClick={() => setProjectHubView('detail')}
@@ -52,8 +41,7 @@ export function ProjectHubPage() {
         </div>
       </div>
 
-      {projectHubView === 'library' ? <HistoryPage mode="library" /> : null}
-      {projectHubView === 'import' ? <JiraPage embedded /> : null}
+      {projectHubView === 'library' || projectHubView === 'import' ? <HistoryPage mode="library" /> : null}
       {projectHubView === 'detail' ? <HistoryPage mode="detail" /> : null}
     </div>
   )

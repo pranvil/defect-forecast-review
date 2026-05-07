@@ -26,7 +26,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { HistoricalProjectMetadataCard } from '@/components/config/HistoricalProjectMetadataCard'
 import { httpPost } from '@/services/http'
 import { isReviewMode } from '@/runtime/mode'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -168,8 +167,6 @@ export function ConfigPage() {
             </div>
           </CardContent>
         </Card>
-
-        <HistoricalProjectMetadataCard />
 
         <Card className="rounded-2xl">
           <CardHeader>

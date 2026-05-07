@@ -107,6 +107,7 @@ export const forecastServiceMock: ForecastService = {
       input.enabledTestingTeams,
       input.enabledDevTeams,
       weekly,
+      input.params.userPrograms.length > 0,
     )
     const createdTeams = teamAllocation.createdTeams
     const fixedTeams = teamAllocation.fixedTeams

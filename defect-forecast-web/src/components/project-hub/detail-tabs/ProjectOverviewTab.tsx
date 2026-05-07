@@ -18,6 +18,12 @@ type ProjectOverviewTabProps = {
     cumFixed: number
     backlog: number
   }
+  analysisRangeSummary: {
+    created: number
+    fixed: number
+    backlog: number
+    backlogPeak: number
+  }
   backlogPeak: number
   topTeamDistribution: TopTeamDistributionRow[]
 }
@@ -25,16 +31,37 @@ type ProjectOverviewTabProps = {
 export function ProjectOverviewTab({
   focusProjectLabel,
   lastWeekly,
+  analysisRangeSummary,
   backlogPeak,
   topTeamDistribution,
 }: ProjectOverviewTabProps) {
   return (
     <TabsContent value="overview" className="space-y-4">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Kpi title="当前项目总 Created" value={lastWeekly?.cumCreated ?? 0} sub={focusProjectLabel} icon={Database} />
-        <Kpi title="当前项目总 Fixed" value={lastWeekly?.cumFixed ?? 0} sub={focusProjectLabel} icon={Sparkles} />
-        <Kpi title="当前项目最终 Backlog" value={lastWeekly?.backlog ?? 0} sub="累计创建 - 累计解决" icon={History} />
-        <Kpi title="当前项目 Backlog 峰值" value={backlogPeak} sub={focusProjectLabel} icon={BarChart3} />
+        <Kpi
+          title="当前时间范围 Created"
+          value={analysisRangeSummary.created}
+          sub={`项目总量 ${lastWeekly?.cumCreated ?? 0}`}
+          icon={Database}
+        />
+        <Kpi
+          title="当前时间范围 Fixed"
+          value={analysisRangeSummary.fixed}
+          sub={`项目总量 ${lastWeekly?.cumFixed ?? 0}`}
+          icon={Sparkles}
+        />
+        <Kpi
+          title="当前时间范围 Backlog"
+          value={analysisRangeSummary.backlog}
+          sub={`项目最终 ${lastWeekly?.backlog ?? 0}`}
+          icon={History}
+        />
+        <Kpi
+          title="当前时间范围 Backlog 峰值"
+          value={analysisRangeSummary.backlogPeak}
+          sub={`项目峰值 ${backlogPeak}`}
+          icon={BarChart3}
+        />
       </div>
       <Card className="rounded-2xl">
         <CardHeader>

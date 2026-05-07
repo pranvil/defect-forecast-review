@@ -24,12 +24,16 @@ $pythonExe = Join-Path $venvDir "Scripts\python.exe"
 $releaseRoot = Join-Path $repoRoot "release"
 $bundleDir = Join-Path $releaseRoot "DRP-win64"
 $zipPath = Join-Path $releaseRoot "DRP-win64.zip"
+$templatePath = Join-Path $serviceDir "templates\DRP_template.xlsx"
+$specPath = Join-Path $serviceDir "DRP.spec"
 
 Require-Command "npm"
 Require-Command "py"
 
 if (-not (Test-Path $frontendDir)) { throw "未找到目录: $frontendDir" }
 if (-not (Test-Path $serviceDir)) { throw "未找到目录: $serviceDir" }
+if (-not (Test-Path $templatePath)) { throw "未找到 Excel 模板: $templatePath" }
+if (-not (Test-Path $specPath)) { throw "未找到 PyInstaller 配置: $specPath" }
 
 if ($Clean) {
     Write-Host "[1/7] 清理旧产物..."
@@ -65,6 +69,9 @@ Write-Host "[3/7] 复制前端静态文件到后端..."
 if (Test-Path $webDistDir) { Remove-Item $webDistDir -Recurse -Force }
 New-Item -ItemType Directory -Path $webDistDir | Out-Null
 Copy-Item (Join-Path $frontendDistDir "*") $webDistDir -Recurse -Force
+if (-not (Test-Path (Join-Path $webDistDir "index.html"))) {
+    throw "前端静态文件复制失败: 未找到 $webDistDir\index.html"
+}
 
 Write-Host "[4/7] 准备 Python 打包环境..."
 if (-not (Test-Path $pythonExe)) {
@@ -76,6 +83,9 @@ if (-not $SkipPipInstall) {
     & $pythonExe -m pip install -r (Join-Path $serviceDir "requirements.txt")
     & $pythonExe -m pip install pyinstaller
 }
+else {
+    & $pythonExe -c "import PyInstaller, fastapi, uvicorn, openpyxl, pandas"
+}
 
 Write-Host "[5/7] 生成 exe (PyInstaller)..."
 Push-Location $serviceDir
@@ -83,12 +93,7 @@ try {
     & $pythonExe -m PyInstaller `
         --noconfirm `
         --clean `
-        --onedir `
-        --name DRP `
-        --collect-all uvicorn `
-        --add-data "templates;templates" `
-        --add-data "web_dist;web_dist" `
-        "run_local.py"
+        "DRP.spec"
 }
 finally {
     Pop-Location
@@ -100,6 +105,7 @@ if (-not (Test-Path $distDir)) {
 }
 
 Write-Host "[6/7] 组织分发目录..."
+if (-not (Test-Path $releaseRoot)) { New-Item -ItemType Directory -Path $releaseRoot | Out-Null }
 if (Test-Path $bundleDir) { Remove-Item $bundleDir -Recurse -Force }
 New-Item -ItemType Directory -Path $bundleDir | Out-Null
 Copy-Item (Join-Path $distDir "*") $bundleDir -Recurse -Force
@@ -119,12 +125,7 @@ DRP 本地版使用说明
 Set-Content -Path (Join-Path $bundleDir "README.txt") -Value $readmeText -Encoding UTF8
 
 Write-Host "[7/7] 生成压缩包..."
-if (Test-Path $releaseRoot) {
-    if (-not (Test-Path $bundleDir)) { throw "分发目录不存在: $bundleDir" }
-}
-else {
-    New-Item -ItemType Directory -Path $releaseRoot | Out-Null
-}
+if (-not (Test-Path $bundleDir)) { throw "分发目录不存在: $bundleDir" }
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $bundleDir "*") -DestinationPath $zipPath -Force
 

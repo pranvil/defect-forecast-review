@@ -50,6 +50,16 @@ export const PROJECT_METADATA_COLUMNS: ProjectMetadataColumn[] = [
 
 export const DEFAULT_PROJECT_METADATA_COLUMN_IDS = PROJECT_METADATA_COLUMNS.map((column) => column.id)
 
+export const LIBRARY_DEFAULT_COLUMN_IDS: ProjectMetadataColumnId[] = [
+  'name',
+  'projectCategory',
+  'region',
+  'os',
+  'deviceType',
+  'defects',
+  'chipsetVendor',
+]
+
 function joinValues(values?: string[]) {
   return values?.filter(Boolean).join(', ') || '-'
 }

@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Kpi } from '@/components/common/Kpi'
+import { TagInput } from '@/components/common/TagInput'
 import { ExcelTemplatePreview } from '@/components/excel-preview/ExcelTemplatePreview'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,6 +48,7 @@ import {
 import { services } from '@/services'
 import { ProjectPicker } from '@/components/common/ProjectPicker'
 import { useForecastStore } from '@/stores/forecastStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { useTeamStore } from '@/stores/teamStore'
 import { adjustCell, adjustGrandTotal, adjustTeamTotal } from '@/utils/datasetAdjustment'
 import {
@@ -82,7 +84,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { ForecastResult } from '@/services/forecastService'
+import type { ForecastDataset, ForecastResult } from '@/services/forecastService'
 import type { MilestoneLabel } from '@/types/project'
 import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
 
@@ -195,6 +197,25 @@ function milestoneLabelsFromCurrentNodes(milestones: MilestoneParam[]): Mileston
     }))
 }
 
+function defectCountInProjectCycle(
+  history: Awaited<ReturnType<typeof services.projectService.getProjectHistory>>,
+  cycle: string,
+): number {
+  const [startRaw, endRaw] = cycle
+    .split(/\s*[-~至—]\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const weekly = history.weekly ?? []
+  if (!weekly.length) return Math.max(0, Number(history.defects ?? 0))
+  if (!startRaw || !endRaw) {
+    return weekly.reduce((sum, row) => sum + (Number.isFinite(row.created) ? row.created : 0), 0)
+  }
+  return weekly.reduce((sum, row) => {
+    if (compareWeekAsc(row.weekLabel, startRaw) < 0 || compareWeekAsc(row.weekLabel, endRaw) > 0) return sum
+    return sum + (Number.isFinite(row.created) ? row.created : 0)
+  }, 0)
+}
+
 export function ParamsPage() {
   const hydrateDefaultsFromServer = useForecastStore((s) => s.hydrateDefaultsFromServer)
   const refProjects = useForecastStore((s) => s.refProjects)
@@ -210,6 +231,7 @@ export function ParamsPage() {
   const ensureDefaultTeamSelection = useForecastStore((s) => s.ensureDefaultTeamSelection)
   const params = useForecastStore((s) => s.params)
   const setParams = useForecastStore((s) => s.setParams)
+  const openProjectDetail = useProjectStore((s) => s.openProjectDetail)
   const teams = useTeamStore((s) => s.teams)
   const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
 
@@ -225,6 +247,7 @@ export function ParamsPage() {
 
   const [projectCycleByName, setProjectCycleByName] = React.useState<Record<string, string>>({})
   const [projectDisplayNameByKey, setProjectDisplayNameByKey] = React.useState<Record<string, string>>({})
+  const [refProjectDefectByKey, setRefProjectDefectByKey] = React.useState<Record<string, number>>({})
   const [allProjects, setAllProjects] = React.useState<string[]>([])
   const projectPickerOptions = React.useMemo(
     () =>
@@ -254,6 +277,35 @@ export function ParamsPage() {
       cancelled = true
     }
   }, [])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const keys = refProjects.map((row) => row.project).filter(Boolean)
+    if (!keys.length) {
+      setRefProjectDefectByKey({})
+      return () => {
+        cancelled = true
+      }
+    }
+    void Promise.all(
+      keys.map(async (projectKey) => {
+        try {
+          const history = await services.projectService.getProjectHistory(projectKey)
+          return [projectKey, defectCountInProjectCycle(history, projectCycleByName[projectKey] ?? history.cycle)] as const
+        } catch {
+          return [projectKey, null] as const
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return
+      setRefProjectDefectByKey(
+        Object.fromEntries(entries.filter((entry): entry is readonly [string, number] => entry[1] !== null)),
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectCycleByName, refProjects])
 
   React.useEffect(() => {
     void hydrateDefaultsFromServer().catch((e: unknown) => {
@@ -365,17 +417,6 @@ export function ParamsPage() {
     })
     return () => window.cancelAnimationFrame(frame)
   }, [forecastResult, shouldScrollToForecast])
-
-  const toggleParamValue = (
-    key: 'operators' | 'userPrograms',
-    value: string,
-    checked: boolean,
-  ) => {
-    const current = params[key]
-    setParams({
-      [key]: checked ? Array.from(new Set([...current, value])) : current.filter((x) => x !== value),
-    })
-  }
 
   const updateInlineMilestone = React.useCallback(
     (index: number, patch: Partial<MilestoneParam>) => {
@@ -751,31 +792,19 @@ export function ParamsPage() {
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label>运营商</Label>
-                    <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-3">
-                      {OPERATOR_OPTIONS.map((option) => (
-                        <label key={option} className="flex items-center gap-2">
-                          <Checkbox
-                            checked={params.operators.includes(option)}
-                            onCheckedChange={(checked) => toggleParamValue('operators', option, checked === true)}
-                          />
-                          <span>{option}</span>
-                        </label>
-                      ))}
-                    </div>
+                    <TagInput 
+                      value={params.operators} 
+                      onChange={(val) => setParams({ operators: val })} 
+                      suggestions={OPERATOR_OPTIONS} 
+                    />
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label>用户测试</Label>
-                    <div className="grid grid-cols-2 gap-2 rounded-2xl border p-3 text-sm md:grid-cols-4">
-                      {USER_PROGRAM_OPTIONS.map((option) => (
-                        <label key={option} className="flex items-center gap-2">
-                          <Checkbox
-                            checked={params.userPrograms.includes(option)}
-                            onCheckedChange={(checked) => toggleParamValue('userPrograms', option, checked === true)}
-                          />
-                          <span>{option}</span>
-                        </label>
-                      ))}
-                    </div>
+                    <TagInput 
+                      value={params.userPrograms} 
+                      onChange={(val) => setParams({ userPrograms: val })} 
+                      suggestions={USER_PROGRAM_OPTIONS} 
+                    />
                   </div>
                 </div>
               </CardContent>
@@ -948,6 +977,7 @@ export function ParamsPage() {
                 <TableRow>
                   <TableHead>项目</TableHead>
                   <TableHead>周期</TableHead>
+                  <TableHead className="text-right">周期 Defect</TableHead>
                   <TableHead>相似度</TableHead>
                   <TableHead>来源</TableHead>
                   <TableHead>操作</TableHead>
@@ -957,10 +987,19 @@ export function ParamsPage() {
                 {refProjects.map((row) => (
                   <TableRow key={row.project}>
                     <TableCell className="font-medium">
-                      {formatProjectLabel(row.project, projectDisplayNameByKey[row.project])}
+                      <button
+                        type="button"
+                        className="text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900"
+                        onClick={() => openProjectDetail(row.project)}
+                      >
+                        {formatProjectLabel(row.project, projectDisplayNameByKey[row.project])}
+                      </button>
                     </TableCell>
                     <TableCell>
                       {projectCycleByName[row.project] ?? '26W?-26W?'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {refProjectDefectByKey[row.project] ?? '-'}
                     </TableCell>
                     <TableCell>{row.similarity}%</TableCell>
                     <TableCell>

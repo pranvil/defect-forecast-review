@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Database, FileSpreadsheet, Filter, LayoutGrid, List, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 
 type ProjectLibrarySectionProps = {
   projectFilter: string
@@ -9,6 +10,8 @@ type ProjectLibrarySectionProps = {
   onOpenImport: () => void
   onAddProject: () => void
   onExportSummary: () => void
+  overwriteExistingOnImport: boolean
+  onOverwriteExistingOnImportChange: (value: boolean) => void
   projectFilterMode: 'all' | 'favorites' | 'recent'
   onProjectFilterModeChange: (mode: 'all' | 'favorites' | 'recent') => void
   projectCount: number
@@ -29,6 +32,8 @@ export function ProjectLibrarySection({
   onOpenImport,
   onAddProject,
   onExportSummary,
+  overwriteExistingOnImport,
+  onOverwriteExistingOnImportChange,
   projectFilterMode,
   onProjectFilterModeChange,
   projectCount,
@@ -52,6 +57,13 @@ export function ProjectLibrarySection({
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <label className="flex h-10 items-center gap-2 rounded-2xl border bg-white px-3 text-sm text-slate-600">
+            <Checkbox
+              checked={overwriteExistingOnImport}
+              onCheckedChange={(checked) => onOverwriteExistingOnImportChange(checked === true)}
+            />
+            <span>覆盖已有项目</span>
+          </label>
           <div className="flex items-center gap-2 rounded-2xl border bg-white px-3">
             <Filter className="h-4 w-4 text-slate-500" />
             <input

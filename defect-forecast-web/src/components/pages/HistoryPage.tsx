@@ -12,6 +12,7 @@ import { ProjectModuleTab } from '@/components/project-hub/detail-tabs/ProjectMo
 import { ProjectOverviewTab } from '@/components/project-hub/detail-tabs/ProjectOverviewTab'
 import { ProjectTeamTab } from '@/components/project-hub/detail-tabs/ProjectTeamTab'
 import { ProjectTrendTab } from '@/components/project-hub/detail-tabs/ProjectTrendTab'
+import { HistoricalProjectMetadataCard } from '@/components/config/HistoricalProjectMetadataCard'
 import { ProjectDetailSection } from '@/components/project-hub/ProjectDetailSection'
 import { ProjectLibrarySection } from '@/components/project-hub/ProjectLibrarySection'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -26,7 +27,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useHistoryPageData } from '@/hooks/useHistoryPageData'
 import {
-  DEFAULT_PROJECT_METADATA_COLUMN_IDS,
+  LIBRARY_DEFAULT_COLUMN_IDS,
   PROJECT_METADATA_COLUMNS,
   type ProjectMetadataColumnId,
   formatProjectMetadataCell,
@@ -38,9 +39,9 @@ type HistoryPageProps = {
 
 export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
   const {
-    addCachedProject,
     analysisStartDateOverride,
     analysisEndDateOverride,
+    analysisRangeSummary,
     backlogPeak,
     defaultAnalysisStartDate,
     defaultAnalysisEndDate,
@@ -53,7 +54,6 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     detailTab,
     devTeamWeeklyRows,
     exportHistoryToExcel,
-    exportProjectSummary,
     exportTeamWeeklyToExcel,
     favoriteProjects,
     focusLineVisible,
@@ -71,7 +71,6 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     historyExportDataset,
     isRefreshingProjectData,
     lastWeekly,
-    openImportView,
     openJiraByJql,
     openLibraryView,
     openProjectDetailView,
@@ -89,6 +88,7 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     recentProjects,
     relativeLength,
     removeCachedProject,
+    refreshProjects,
     selectedProjects,
     setAnalysisStartDateOverride,
     setAnalysisEndDateOverride,
@@ -115,10 +115,16 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     effectiveAnalysisStartDate,
     effectiveAnalysisEndDate,
   } = useHistoryPageData()
+  const [projectMetadataAction, setProjectMetadataAction] = React.useState<'add' | 'import' | 'export' | null>(null)
+  const [overwriteExistingOnImport, setOverwriteExistingOnImport] = React.useState(false)
+  const handleProjectMetadataActionHandled = React.useCallback(() => setProjectMetadataAction(null), [])
+  const handleProjectMetadataRowsChanged = React.useCallback(() => {
+    void refreshProjects()
+  }, [refreshProjects])
   const showLibrary = mode !== 'detail'
   const showDetail = mode !== 'library'
   const [visibleProjectColumnIds, setVisibleProjectColumnIds] = React.useState<ProjectMetadataColumnId[]>(
-    DEFAULT_PROJECT_METADATA_COLUMN_IDS,
+    LIBRARY_DEFAULT_COLUMN_IDS,
   )
   const visibleProjectColumns = React.useMemo(
     () => PROJECT_METADATA_COLUMNS.filter((column) => visibleProjectColumnIds.includes(column.id)),
@@ -133,13 +139,23 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
 
   return (
     <div className="space-y-6">
+      <HistoricalProjectMetadataCard
+        variant="controller"
+        action={projectMetadataAction}
+        overwriteExistingOnImport={overwriteExistingOnImport}
+        onOverwriteExistingOnImportChange={setOverwriteExistingOnImport}
+        onActionHandled={handleProjectMetadataActionHandled}
+        onRowsChanged={handleProjectMetadataRowsChanged}
+      />
       {showLibrary ? (
         <ProjectLibrarySection
           projectFilter={projectFilter}
           onProjectFilterChange={setProjectFilter}
-          onOpenImport={openImportView}
-          onAddProject={() => void addCachedProject()}
-          onExportSummary={exportProjectSummary}
+          onOpenImport={() => setProjectMetadataAction('import')}
+          onAddProject={() => setProjectMetadataAction('add')}
+          onExportSummary={() => setProjectMetadataAction('export')}
+          overwriteExistingOnImport={overwriteExistingOnImport}
+          onOverwriteExistingOnImportChange={setOverwriteExistingOnImport}
           projectFilterMode={projectFilterMode}
           onProjectFilterModeChange={setProjectFilterMode}
           projectCount={projectCount}
@@ -371,7 +387,7 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
           focusProjectIsFavorite={focusProjectIsFavorite}
           onBackToLibrary={openLibraryView}
           onRefreshProjectData={() => void refreshCurrentProjectData()}
-          onOpenImport={openImportView}
+          onOpenImport={() => setProjectMetadataAction('import')}
           onToggleFavorite={() => toggleFavorite(focusProject)}
           isRefreshingProjectData={isRefreshingProjectData}
           analysisStartDateOverride={analysisStartDateOverride}
@@ -393,6 +409,7 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
               <ProjectOverviewTab
                 focusProjectLabel={focusProjectLabel}
                 lastWeekly={lastWeekly}
+                analysisRangeSummary={analysisRangeSummary}
                 backlogPeak={backlogPeak}
                 topTeamDistribution={topTeamDistribution}
               />

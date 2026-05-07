@@ -37,12 +37,8 @@ from app.models import (
     WeeklyPoint,
 )
 
-DEFAULT_PROJECTS = [
-    ("Monet NP Dish", "26W2-26W27", 980, 8, 91.0),
-    ("Beryl TMO", "26W4-26W29", 1126, 9, 84.0),
-    ("Goldfinch TMO", "26W3-26W26", 865, 8, 79.0),
-    ("Atlas VZW", "26W6-26W30", 1038, 8, 68.0),
-]
+DEFAULT_PROJECTS = []
+USER_PROGRAM_TEST_TEAM = "Hera/Usersupport/APRUUT"
 
 SIMILARITY_WEIGHTS = (
     ("projectCategory", 0.25),
@@ -530,7 +526,7 @@ def _build_effective_query(req: JiraFetchRequest) -> str:
     if req.pullMode == "projectStart":
         if not req.startDate.strip() or not req.endDate.strip():
             raise ValueError("项目+日期模式下请填写开始日期和结束日期")
-        return f"project = {req.projectKey} AND issuetype in (defect, bug)"
+        return f"project = {req.projectKey} AND issuetype in (defect, bug, defect_new)"
     raise ValueError(f"Unsupported pullMode: {req.pullMode}")
 
 
@@ -1186,7 +1182,7 @@ def _top_similar_projects(input_data: ForecastInput, limit: int = 3) -> list[tup
         scored.append((project, score))
 
     scored.sort(key=lambda row: (-row[1], -row[0].defects, row[0].name))
-    return scored[:limit]
+    return [row for i, row in enumerate(scored) if row[1] >= 0.995 or i < limit]
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -1229,9 +1225,18 @@ def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[Projec
 
 
 def _predict_defect_total(input_data: ForecastInput) -> tuple[int, int, list[dict[str, object]], dict[str, float]]:
-    top_projects = _top_similar_projects(input_data)
-    if not top_projects:
-        raise ValueError("没有相似度大于 0 的历史项目，无法预测 Defect 总数")
+    if input_data.refProjects:
+        project_map = {p.name: p for p in list_project_summaries()}
+        top_projects: list[tuple[ProjectSummary, float]] = []
+        for ref in input_data.refProjects:
+            if ref.project in project_map:
+                top_projects.append((project_map[ref.project], ref.similarity / 100.0))
+        if not top_projects:
+            raise ValueError("前端传入的参考项目在系统中均不存在，无法预测")
+    else:
+        top_projects = _top_similar_projects(input_data)
+        if not top_projects:
+            raise ValueError("没有相似度大于 0 的历史项目，无法预测 Defect 总数")
 
     similarity_sum = sum(score for _, score in top_projects)
     if similarity_sum <= 0:
@@ -1730,8 +1735,13 @@ def _allocate_teams_from_history(
     testing_teams: list[str],
     dev_teams: list[str],
     weekly: list[WeeklyPoint],
+    has_user_programs: bool = True,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[ForecastWarning]]:
     warnings: list[ForecastWarning] = []
+    effective_testing_teams = [
+        team for team in testing_teams
+        if has_user_programs or team.strip() != USER_PROGRAM_TEST_TEAM
+    ]
 
     def ratios_for(teams: list[str], field: str, team_configs: list[object], label: str) -> list[float]:
         if not teams:
@@ -1744,10 +1754,10 @@ def _allocate_teams_from_history(
             raise ValueError(f"勾选的{label} '{names}' 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。")
         return [totals.get(team, 0) / selected_total for team in teams]
 
-    created_ratios = ratios_for(testing_teams, "createdTeams", testing_team_configs, "测试团队")
+    created_ratios = ratios_for(effective_testing_teams, "createdTeams", testing_team_configs, "测试团队")
     fixed_ratios = ratios_for(dev_teams, "fixedTeams", dev_team_configs, "开发团队")
     return (
-        _split_weekly_by_ratios(testing_teams, [row.created for row in weekly], created_ratios, "测试团队"),
+        _split_weekly_by_ratios(effective_testing_teams, [row.created for row in weekly], created_ratios, "测试团队"),
         _split_weekly_by_ratios(dev_teams, [row.fixed for row in weekly], fixed_ratios, "开发团队"),
         warnings,
     )
@@ -1871,6 +1881,7 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
         input_data.enabledTestingTeams,
         input_data.enabledDevTeams,
         weekly,
+        bool(input_data.params.userPrograms),
     )
     warnings.extend(team_warnings)
 

@@ -16,7 +16,7 @@ export const PROJECT_CATEGORY_OPTIONS = [
   '其他',
 ] as const
 
-export const REGION_OPTIONS = ['US', 'NA OM', 'GL', 'All', '其他'] as const
+export const REGION_OPTIONS = ['US', 'CA', 'CN', 'GL', 'All', 'NA OM'] as const
 
 export const OS_OPTIONS = ['Android', 'Kaios', 'AOSP', '其他'] as const
 
@@ -29,12 +29,15 @@ export const CHIPSET_NEWNESS_OPTIONS = ['Old', 'New'] as const
 export const CHIPSET_STATUS_OPTIONS = ['Old_MTK', 'New_MTK', 'Old_Qualcomm', 'New_Qualcomm'] as const
 
 export const OPERATOR_OPTIONS = [
+  'All',
   'US_VZW',
   'US_TMO',
   'US_ATT',
   'US_USCC',
   'US_DISH',
   'US_Spectrum',
+  'US_OM',
+  'US_BBH',
   'CA_Rogers',
   'CA_Bell',
   'CA_Telus',

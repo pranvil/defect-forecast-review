@@ -238,7 +238,7 @@ def cached_projects_upsert(rows: list[ProjectSummary]) -> list[ProjectSummary]:
     return upsert_cached_projects(rows)
 
 
-@app.delete("/api/projects/cached/{project_name}")
+@app.delete("/api/projects/cached/{project_name:path}")
 def cached_projects_delete(project_name: str) -> dict[str, str]:
     ok = delete_cached_project(project_name)
     if not ok:
@@ -286,7 +286,7 @@ def config_save_compare_colors(payload: CompareColorsConfig) -> list[str]:
     return save_compare_colors(payload)
 
 
-@app.get("/api/projects/{project_name}/history", response_model=ProjectHistory)
+@app.get("/api/projects/{project_name:path}/history", response_model=ProjectHistory)
 def project_history(project_name: str) -> ProjectHistory:
     try:
         return get_project_history(project_name)
@@ -318,7 +318,7 @@ def forecast_delete_version(version_id: str) -> dict[str, str]:
     return {"status": "deleted", "id": version_id}
 
 
-@app.get("/api/compare/{project_name}", response_model=CompareResponse)
+@app.get("/api/compare/{project_name:path}", response_model=CompareResponse)
 def compare_project(project_name: str, forecastVersionId: str | None = None) -> CompareResponse:
     try:
         return build_compare(project_name, forecastVersionId)

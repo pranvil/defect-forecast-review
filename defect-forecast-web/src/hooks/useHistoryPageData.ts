@@ -36,7 +36,7 @@ const DEFAULT_JIRA_BASE_URL = 'https://jira.tcl.com'
 const TESTING_OTHER_TEAM = '其他测试团队'
 const DEVELOPMENT_OTHER_TEAM = '其他开发团队'
 const JIRA_PROJECT_FETCH_FILTER_CLAUSE =
-  'issuetype in (defect, defect_new) AND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED") AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR" AND summary !~ "CloneMP") AND (resolution is EMPTY OR resolution not in ("Needn\'t Fixed", "Duplicate", "Duplicated"))'
+  'issuetype in (defect, defect_new) AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR" AND summary !~ "CloneMP")'
 
 function isCompareAxisMode(value: unknown): value is CompareAxisMode {
   return value === 'calendar' || value === 'relative'
@@ -409,6 +409,18 @@ export function useHistoryPageData() {
     const finalBacklog = lastWeekly?.backlog ?? 0
     return Math.max(peakFromSeries, finalBacklog)
   }, [lastWeekly?.backlog, safeWeekly])
+  const analysisRangeSummary = React.useMemo(() => {
+    const created = visibleWeekly.reduce((sum, row) => sum + (Number.isFinite(row.created) ? row.created : 0), 0)
+    const fixed = visibleWeekly.reduce((sum, row) => sum + (Number.isFinite(row.fixed) ? row.fixed : 0), 0)
+    const backlog = Math.max(0, created - fixed)
+    const backlogPeakInRange = visibleWeekly.length ? Math.max(...visibleWeekly.map((row) => row.backlog)) : 0
+    return {
+      created,
+      fixed,
+      backlog,
+      backlogPeak: backlogPeakInRange,
+    }
+  }, [visibleWeekly])
   const testingTopTeams = (focus?.createdTeams ?? [])
     .map((t) => ({
       team: t.team,
@@ -598,10 +610,6 @@ export function useHistoryPageData() {
 
   const removeCachedProject = React.useCallback(
     async (projectName: string) => {
-      if (projects.length <= 1) {
-        toast('无法删除', { description: '至少保留 1 个历史项目' })
-        return
-      }
       if (!window.confirm(`确认删除项目 ${projectName} 吗？`)) return
       try {
         await services.projectService.deleteCachedProject(projectName)
@@ -612,9 +620,11 @@ export function useHistoryPageData() {
           setSelectedProjects(nextSelected)
         } else if (rows[0]) {
           setSelectedProjects([rows[0].name])
+        } else {
+          setSelectedProjects([])
         }
-        if (!names.has(focusProject) && rows[0]) {
-          setFocusProject(rows[0].name)
+        if (!names.has(focusProject)) {
+          setFocusProject(rows[0] ? rows[0].name : '')
         }
         toast('已删除项目', { description: projectName })
       } catch (e: unknown) {
@@ -891,6 +901,7 @@ export function useHistoryPageData() {
     addCachedProject,
     analysisStartDateOverride,
     analysisEndDateOverride,
+    analysisRangeSummary,
     backlogPeak,
     defaultAnalysisStartDate,
     defaultAnalysisEndDate,
@@ -942,6 +953,7 @@ export function useHistoryPageData() {
     recentProjects,
     relativeLength,
     removeCachedProject,
+    refreshProjects,
     selectedProjects,
     setAnalysisStartDateOverride,
     setAnalysisEndDateOverride,

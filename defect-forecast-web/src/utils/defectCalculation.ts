@@ -188,7 +188,7 @@ export function findTopSimilarProjects(
     .map((project) => ({ project, score: scoreSimilarProject(input, project) }))
     .filter((row): row is SimilarProjectScore => row.score !== null && row.score > 0)
     .sort((a, b) => b.score - a.score || b.project.defects - a.project.defects || a.project.name.localeCompare(b.project.name))
-    .slice(0, limit)
+    .filter((row, index) => row.score >= 0.995 || index < limit)
 }
 
 export function calculate_defects(

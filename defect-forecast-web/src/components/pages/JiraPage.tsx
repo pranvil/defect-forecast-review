@@ -32,11 +32,11 @@ const JIRA_FETCH_FORM_KEY = 'drp.jira.fetch.form.v1'
 const JIRA_FETCH_LAST_RESULT_KEY = 'drp.jira.fetch.last-result.v1'
 const DEFAULT_PROJECT_KEY = 'MNTNPOM'
 const LEGACY_DEFAULT_JQL =
-  `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))\nAND created >= 2026-01-01\nAND created < 2026-07-01`
+  `project = MNTNPOM\nAND issuetype in (defect, defect_new)\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND created >= 2026-01-01\nAND created < 2026-07-01`
 
 function buildIssueFetchJql(projectKey: string): string {
   const key = projectKey.trim().toUpperCase() || DEFAULT_PROJECT_KEY
-  return `project = ${key}\nAND issuetype in (defect, bug)\nAND status in ("MORE INFO", "ASSIGNED", "OPENED", "RESOLVE", "VERIFIED_SW", "DELIVERED", "VERIFIED", "CLOSED")\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"\nAND (resolution is EMPTY OR resolution not in ("Needn't Fixed", "Duplicate", "Duplicated"))`
+  return `project = ${key}\nAND issuetype in (defect, bug, defect_new)\nAND summary !~ "MAIN2MP"\nAND summary !~ "MP2SMR"\nAND summary !~ "CloneMP"`
 }
 
 function isGeneratedIssueFetchJql(jql: string, projectKey: string): boolean {
