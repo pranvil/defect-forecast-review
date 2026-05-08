@@ -1,5 +1,5 @@
 import { delay } from '@/services/delay'
-import type { JiraFetchRequest, JiraFetchResult, JiraService } from '@/services/jiraService'
+import type { JiraCreateFilterRequest, JiraCreateFilterResult, JiraFetchRequest, JiraFetchResult, JiraService } from '@/services/jiraService'
 import { projectServiceMock } from '@/services/projectService.mock'
 
 function pseudoCountFromString(s: string): number {
@@ -28,6 +28,12 @@ export const jiraServiceMock: JiraService = {
   async listCachedProjects() {
     await delay(80)
     return projectServiceMock.listCachedProjects()
+  },
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async createFilter(_req: JiraCreateFilterRequest): Promise<JiraCreateFilterResult> {
+    await delay(50)
+    return { filterId: '', filterUrl: '' }
   },
 }
 

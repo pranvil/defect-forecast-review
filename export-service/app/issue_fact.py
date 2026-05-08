@@ -43,6 +43,9 @@ DEFAULT_DELETED_FIELD = "customfield_13222"
 DEFAULT_POSTPONED_FIELD = "customfield_13225"
 UNKNOWN_CREATED_TEAM = "测试未知团队"
 UNKNOWN_FIXED_TEAM = "软件-未知团队"
+GOOGLE_XTS_TEAM = "Google XTS"
+PIPELINE_TEAM = "流水线"
+SWTC_DEVOPS_REPORTER = "swtc_devops"
 
 
 def _utcnow_iso() -> str:
@@ -162,6 +165,8 @@ def _enrich_issue_row_from_stored_raw(issue: dict[str, Any]) -> dict[str, Any]:
         reporter = _extract_actor_identity(fields.get("reporter"))
         if reporter:
             out["reporter"] = reporter
+    if not isinstance(out.get("components"), list):
+        out["components"] = _extract_components(fields)
     return out
 
 
@@ -230,6 +235,20 @@ def _resolve_unknown_team_bucket(team_name: str, reporter: str, unknown_label: s
     if actor:
         return f"{unknown_label}-{actor}"
     return f"{unknown_label}-(unknown-reporter)"
+
+
+def _normalized_token(value: str) -> str:
+    return "".join(value.strip().lower().split())
+
+
+def _resolve_created_team_bucket(team_name: str, reporter: str, components: Any) -> str:
+    reporter_key = _normalized_token(reporter)
+    component_names = components if isinstance(components, list) else []
+    if reporter_key == SWTC_DEVOPS_REPORTER:
+        if any(_normalized_token(str(component)) == "googlexts" for component in component_names):
+            return GOOGLE_XTS_TEAM
+        return PIPELINE_TEAM
+    return _resolve_unknown_team_bucket(team_name, reporter, UNKNOWN_CREATED_TEAM)
 
 
 def _extract_project_key(raw: Any) -> str:
@@ -500,7 +519,7 @@ def _build_weekly_rows(issues: list[dict[str, Any]]) -> tuple[list[WeeklyPoint],
         if created_week:
             created_counts[created_week] = created_counts.get(created_week, 0) + 1
             reporter = str(issue.get("reporter") or "").strip()
-            created_team = _resolve_unknown_team_bucket(str(issue.get("reporter_team") or ""), reporter, UNKNOWN_CREATED_TEAM)
+            created_team = _resolve_created_team_bucket(str(issue.get("reporter_team") or ""), reporter, issue.get("components"))
             created_team_counts.setdefault(created_week, {})[created_team] = created_team_counts.get(created_week, {}).get(created_team, 0) + 1
             created_issue_keys.setdefault(created_week, {}).setdefault(created_team, []).append(issue["issue_key"])
 
@@ -604,7 +623,7 @@ def _upsert_project_summary(project_key: str, cycle_label: str, issues: list[dic
     teams = set()
     for issue in active_issues:
         reporter = str(issue.get("reporter") or "").strip()
-        teams.add(_resolve_unknown_team_bucket(str(issue.get("reporter_team") or ""), reporter, UNKNOWN_CREATED_TEAM))
+        teams.add(_resolve_created_team_bucket(str(issue.get("reporter_team") or ""), reporter, issue.get("components")))
         teams.add(_resolve_unknown_team_bucket(str(issue.get("assignee_team") or ""), reporter, UNKNOWN_FIXED_TEAM))
     synced_at = _utcnow_iso()
     with get_conn() as conn:
@@ -1363,9 +1382,9 @@ def _load_forecast_result(project_name: str, forecast_version_id: str | None) ->
                 """
                 SELECT id, result_json
                 FROM forecast_version
-                WHERE id = ? AND project_name = ? AND deleted_at IS NULL
+                WHERE id = ? AND deleted_at IS NULL
                 """,
-                (forecast_version_id, key),
+                (forecast_version_id,),
             ).fetchone()
         else:
             row = conn.execute(
@@ -1391,14 +1410,10 @@ def build_compare(project_name: str, forecastVersionId: str | None = None) -> Co
     summary = _load_summary(project_name)
     history_rows = _load_weekly_source(project_name, "history")
     jira_rows = _load_weekly_source(project_name, "jira")
-    if not history_rows and jira_rows:
-        history_rows = jira_rows
-    if not jira_rows and history_rows:
-        jira_rows = history_rows
-    if not history_rows and not jira_rows and not summary:
+    effective_version_id, forecast = _load_forecast_result(project_name, forecastVersionId)
+    if not history_rows and not jira_rows and not summary and not forecast:
         raise ValueError(f"Project not found: {project_name}")
 
-    effective_version_id, forecast = _load_forecast_result(project_name, forecastVersionId)
     history_map = {row.weekLabel: row for row in history_rows}
     jira_map = {row.weekLabel: row for row in jira_rows}
     forecast_map = {row.weekLabel: row for row in (forecast.dataset.weekly if forecast else [])}
@@ -1426,8 +1441,8 @@ def build_compare(project_name: str, forecastVersionId: str | None = None) -> Co
         totalHistoryCreated=sum(row.historyCreated for row in weekly),
         totalJiraCreated=sum(row.jiraCreated for row in weekly),
         totalForecastCreated=sum(row.forecastCreated for row in weekly),
-        jiraVsForecastGap=sum(row.forecastCreated for row in weekly) - sum(row.jiraCreated for row in weekly),
-        historyVsForecastGap=sum(row.forecastCreated for row in weekly) - sum(row.historyCreated for row in weekly),
+        jiraVsForecastGap=sum(row.jiraCreated for row in weekly) - sum(row.forecastCreated for row in weekly),
+        historyVsForecastGap=sum(row.historyCreated for row in weekly) - sum(row.forecastCreated for row in weekly),
     )
     return CompareResponse(
         projectName=summary.name if summary else _normalize_project_key(project_name),

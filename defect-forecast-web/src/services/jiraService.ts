@@ -1,5 +1,21 @@
 import type { ProjectSummary } from '@/services/projectService'
 
+export interface JiraCreateFilterRequest {
+  jql: string
+  filterName?: string
+  baseUrl: string
+  authType: 'pat' | 'basic'
+  username: string
+  token: string
+  verifySsl: boolean
+  timeoutSec: number
+}
+
+export interface JiraCreateFilterResult {
+  filterId: string
+  filterUrl: string
+}
+
 export interface JiraFetchRequest {
   projectKey: string
   startWeek: string
@@ -30,4 +46,5 @@ export interface JiraFetchResult {
 export interface JiraService {
   fetchByJql(req: JiraFetchRequest): Promise<JiraFetchResult>
   listCachedProjects(): Promise<ProjectSummary[]>
+  createFilter(req: JiraCreateFilterRequest): Promise<JiraCreateFilterResult>
 }

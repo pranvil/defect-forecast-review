@@ -114,14 +114,14 @@ export const fixedDevelopmentTeams: TeamItem[] = [
     name: '终端OS部',
     type: 'development',
     enabled: true,
-    note: '系统技术中心-终端OS部-性能解决方案组',
+    note: '系统技术中心-终端OS部-性能解决方案组，系统技术中心-终端OS部-系统优化组',
   },
   {
     id: 'development-camera',
     name: 'Camera',
     type: 'development',
     enabled: true,
-    note: 'MP PL-Tech.&Inno.-Camera LAB-APP Team，MP PL-R&D-Camera LAB-APP Team，MP PL-Tech.&Inno.-Camera LAB-HAL Team，MP PL-R&D-Camera LAB-HAL Team，MP PL-Tech.&Inno.-Camera LAB，MP PL-R&D-Camera LAB，MP PL-Tech.&Inno.-Camera LAB-Tuning Team，MP PL-R&D-Camera LAB-IQA Team，MP PL-R&D-Camera LAB-Tuning Team',
+    note: 'MP PL-Tech.&Inno.-Camera LAB-APP Team，MP PL-R&D-Camera LAB-APP Team，MP PL-Tech.&Inno.-Camera LAB-HAL Team，MP PL-R&D-Camera LAB-HAL Team，MP PL-Tech.&Inno.-Camera LAB，MP PL-R&D-Camera LAB，MP PL-Tech.&Inno.-Camera LAB-Tuning Team，MP PL-R&D-Camera LAB-IQA Team，MP PL-R&D-Camera LAB-Tuning Team，MP BU-R&D-Camlab-APP Team，MP BU-R&D-Camlab-CamPM Team，MP BU-R&D-Camlab-HAL Team，MP BU-R&D-Camlab-IQA Team，MP BU-R&D-Camlab-Tuning Team',
   }
 ]
 

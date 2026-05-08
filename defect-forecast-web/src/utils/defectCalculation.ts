@@ -43,10 +43,15 @@ export type DefectHistoricalProject = {
   os?: string
   deviceType?: string
   chipsetVendor?: string
+  chipsetStatus?: string
+  chipsetNewness?: string
+  pipeline?: string
   mm?: number
   frQuantity?: number
   operators?: string[]
+  userPrograms?: string[]
   idhVendor?: string
+  supportSim?: 'Yes' | 'No'
 }
 
 export type SimilarProjectScore = {
@@ -64,6 +69,8 @@ export type DefectCalculationResult = {
     userPrograms: number
     supportSim: number
     mm: number
+    pipeline: number
+    frQuantity: number
   }
 }
 
@@ -88,12 +95,30 @@ const IDH_SIMILARITY_WEIGHTS = [
 
 const IDH_PROJECT_CATEGORIES = new Set(['idh联合项目', 'idh全o'])
 const FR_QUANTITY_BANDS = [500, 1000, ...Array.from({ length: 38 }, (_, i) => 1500 + i * 500)]
+const FR_QUANTITY_RATIO_DELTAS = [
+  { upper: 0.5, delta: -0.1 },
+  { upper: 0.6, delta: -0.08 },
+  { upper: 0.7, delta: -0.06 },
+  { upper: 0.8, delta: -0.04 },
+  { upper: 0.9, delta: -0.025 },
+  { upper: 0.95, delta: -0.01 },
+  { upper: 1.05, delta: 0 },
+  { upper: 1.1, delta: 0.01 },
+  { upper: 1.2, delta: 0.025 },
+  { upper: 1.35, delta: 0.04 },
+  { upper: 1.5, delta: 0.06 },
+  { upper: 1.75, delta: 0.08 },
+] as const
 const PIPELINE_FACTORS: Record<string, number> = {
   全部: 1.08,
   冒烟: 1.01,
   无冒烟: 0.99,
   不部署: 0.92,
   无: 0.92,
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(high, Math.max(low, value))
 }
 
 function normalizeComparable(value: string | undefined): string {
@@ -124,6 +149,13 @@ function frBandSimilarity(inputValue: number, projectValue?: number): number | n
   if (diff === 1) return 0.75
   if (diff === 2) return 0.4
   return 0
+}
+
+function frQuantityDelta(inputValue: number, referenceAverage: number): number {
+  if (!Number.isFinite(inputValue) || inputValue <= 0) return 0
+  if (!Number.isFinite(referenceAverage) || referenceAverage <= 0) return 0
+  const ratio = inputValue / referenceAverage
+  return FR_QUANTITY_RATIO_DELTAS.find((band) => ratio <= band.upper)?.delta ?? 0.1
 }
 
 function fieldSimilarity(
@@ -200,39 +232,85 @@ export function calculate_defects(
 
   const baseValue =
     topProjects.reduce((sum, row) => sum + row.project.defects, 0) / topProjects.length
-  const chipset = input.Chipset_Newness === 'New' || input.Chipset_Status.includes('New') ? 1.2 : 1
-  const operators = 1 + input.Operators.length * 0.1
-  const userProgramIncrease =
+  const chipsetInput = input.Chipset_Newness === 'New' || input.Chipset_Status.includes('New') ? 1.2 : 1
+  const operatorCountInput = input.Operators.length
+  const operatorIncreaseInput = Math.max(0, operatorCountInput - 1) * 0.1
+  const operatorsInput = Math.min(1.5, 1 + operatorIncreaseInput)
+  const userProgramIncreaseInput =
     input.User_Programs.length <= 0
       ? 0
       : Math.min(0.25, 0.1 + Math.max(0, input.User_Programs.length - 1) * 0.05)
-  const supportSim = input.Support_SIM === 'No' ? 0.8 : 1
+  const userProgramsInput = 1 + userProgramIncreaseInput
+  const supportSimInput = input.Support_SIM === 'No' ? 0.8 : 1
+  const pipelineInput = PIPELINE_FACTORS[input.Pipeline] ?? 1
+
+  const refChipsetAvg =
+    topProjects.reduce((sum, row) => {
+      const n = row.project.chipsetNewness ?? row.project.chipsetStatus?.split('_')[0] ?? ''
+      return sum + (n === 'New' ? 1.2 : 1)
+    }, 0) / topProjects.length
+  const refOperatorsAvg =
+    topProjects.reduce((sum, row) => {
+      const n = row.project.operators?.length ?? 0
+      const inc = Math.max(0, n - 1) * 0.1
+      return sum + Math.min(1.5, 1 + inc)
+    }, 0) / topProjects.length
+  const refUserProgramsAvg =
+    topProjects.reduce((sum, row) => {
+      const n = row.project.userPrograms?.length ?? 0
+      const inc = n <= 0 ? 0 : Math.min(0.25, 0.1 + Math.max(0, n - 1) * 0.05)
+      return sum + (1 + inc)
+    }, 0) / topProjects.length
+  const refSupportSimAvg =
+    topProjects.reduce((sum, row) => sum + (row.project.supportSim === 'No' ? 0.8 : 1), 0) / topProjects.length
+  const refPipelineAvg =
+    topProjects.reduce((sum, row) => sum + (PIPELINE_FACTORS[row.project.pipeline ?? ''] ?? 1), 0) / topProjects.length
+  const historicalFrQuantities = topProjects
+    .map((row) => row.project.frQuantity)
+    .filter((fr): fr is number => typeof fr === 'number' && Number.isFinite(fr) && fr > 0)
+  const refFrQuantityAvg =
+    historicalFrQuantities.length > 0
+      ? historicalFrQuantities.reduce((sum, fr) => sum + fr, 0) / historicalFrQuantities.length
+      : 1
   const historicalMm = topProjects
     .map((row) => row.project.mm)
     .filter((mm): mm is number => typeof mm === 'number' && Number.isFinite(mm) && mm > 0)
   const avgMm =
     historicalMm.length > 0 ? historicalMm.reduce((sum, mm) => sum + mm, 0) / historicalMm.length : 0
-  const mmIncrease = avgMm > 0 && input.MM > 0 ? Math.min(0.2, Math.max(0, (input.MM / avgMm - 1) * 0.8)) : 0
-  const pipeline = PIPELINE_FACTORS[input.Pipeline] ?? 1
+  const mmIncrease =
+    avgMm > 0 && input.MM > 0
+      ? clamp((input.MM / avgMm - 1) * 0.4, -0.2, 0.2)
+      : 0
+  const chipsetRelative = (chipsetInput - 1) - (refChipsetAvg - 1)
+  const operatorsRelative = (operatorsInput - 1) - (refOperatorsAvg - 1)
+  const userProgramsRelative = (userProgramsInput - 1) - (refUserProgramsAvg - 1)
+  const supportSimRelative = (supportSimInput - 1) - (refSupportSimAvg - 1)
+  const pipelineRelative = (pipelineInput - 1) - (refPipelineAvg - 1)
+  const frQuantityRelative = frQuantityDelta(input.FR_Quantity, refFrQuantityAvg)
   const factors = {
-    chipset,
-    operators,
-    userPrograms: 1 + userProgramIncrease,
-    supportSim,
+    chipset: 1 + chipsetRelative,
+    operators: 1 + operatorsRelative,
+    userPrograms: 1 + userProgramsRelative,
+    supportSim: 1 + supportSimRelative,
     mm: 1 + mmIncrease,
-    pipeline,
+    pipeline: 1 + pipelineRelative,
+    frQuantity: 1 + frQuantityRelative,
   }
 
   return {
     estimatedDefects: Math.round(
-      baseValue * Math.max(0.1, 1 +
-        (chipset - 1) +
-        (operators - 1) +
-        (factors.userPrograms - 1) +
-        (supportSim - 1) +
-        (factors.mm - 1) +
-        (pipeline - 1)
-      )
+      baseValue *
+        Math.max(
+          0.1,
+          1 +
+            (factors.chipset - 1) +
+            (factors.operators - 1) +
+            (factors.userPrograms - 1) +
+            (factors.supportSim - 1) +
+            (factors.mm - 1) +
+            (factors.pipeline - 1) +
+            (factors.frQuantity - 1),
+        ),
     ),
     baseValue: Math.round(baseValue),
     topProjects,

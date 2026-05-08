@@ -105,11 +105,12 @@ interface ImportStatus {
   done: boolean
 }
 
-type ProjectMetadataAction = 'add' | 'import' | 'export'
+type ProjectMetadataAction = 'add' | 'edit' | 'import' | 'export'
 
 type HistoricalProjectMetadataCardProps = {
   variant?: 'card' | 'controller'
   action?: ProjectMetadataAction | null
+  editProjectKey?: string
   overwriteExistingOnImport?: boolean
   onOverwriteExistingOnImportChange?: (value: boolean) => void
   onActionHandled?: () => void
@@ -215,7 +216,12 @@ function parseDelimited(text: string): Record<string, string>[] {
 
   if (rows.length < 2) return []
   
-  const headers = rows[0]!.map(x => x.trim())
+  const headers = rows[0]!.map((x) =>
+    x
+      .split('(')[0]!
+      .split('（')[0]!
+      .trim(),
+  )
   return rows.slice(1).map(row => {
     return Object.fromEntries(headers.map((header, idx) => [header, (row[idx] ?? '').trim()]))
   })
@@ -308,6 +314,7 @@ function exportCsv(rows: ProjectSummary[]): string {
 export function HistoricalProjectMetadataCard({
   variant = 'card',
   action = null,
+  editProjectKey,
   overwriteExistingOnImport: overwriteExistingOnImportProp,
   onOverwriteExistingOnImportChange,
   onActionHandled,
@@ -457,13 +464,20 @@ export function HistoricalProjectMetadataCard({
     if (!action) return
     if (action === 'add') {
       openEdit()
+    } else if (action === 'edit') {
+      const key = editProjectKey?.trim().toUpperCase()
+      if (key) {
+        const row = rows.find((r) => r.name.trim().toUpperCase() === key)
+        if (row) openEdit(row)
+        else toast('未找到项目元数据', { description: `项目 ${key} 不存在或尚未加载` })
+      }
     } else if (action === 'import') {
       fileInputRef.current?.click()
     } else if (action === 'export') {
       exportCurrentRows()
     }
     onActionHandled?.()
-  }, [action, exportCurrentRows, onActionHandled])
+  }, [action, editProjectKey, exportCurrentRows, onActionHandled, rows])
 
   return (
     <Card

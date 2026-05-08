@@ -8,6 +8,7 @@ type ExcelTemplatePreviewProps = {
     'weekly' | 'createdTeams' | 'fixedTeams' | 'milestones'
   >
   compact?: boolean
+  milestoneTargetMode?: 'currentWeek' | 'previousWeek'
   onCellChange?: (team: string, weekIndex: number, newValue: number, type: 'created' | 'fixed') => void
 }
 
@@ -15,6 +16,7 @@ export function ExcelTemplatePreview({
   projectName,
   dataset,
   compact = false,
+  milestoneTargetMode = 'currentWeek',
   onCellChange,
 }: ExcelTemplatePreviewProps) {
   const createdRows = dataset.createdTeams ?? []
@@ -39,9 +41,35 @@ export function ExcelTemplatePreview({
     }
     return map
   }
+  const actualRateByWeek = (
+    metric: 'devResolutionRate' | 'testSubmissionRate',
+  ) => {
+    const map = new Map<string, string>()
+    const finalCreated = cumCreated.at(-1) ?? 0
+    for (const milestone of dataset.milestones ?? []) {
+      const value = milestone[metric]
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue
+      const idx = weeks.indexOf(milestone.week)
+      if (idx < 0) continue
+      const targetIdx = milestoneTargetMode === 'previousWeek' ? Math.max(0, idx - 1) : idx
+      const denominator = metric === 'testSubmissionRate' ? finalCreated : cumCreated[targetIdx]
+      const numerator = metric === 'testSubmissionRate' ? cumCreated[targetIdx] : cumFixed[targetIdx]
+      if (!denominator) continue
+      const actual = (numerator / denominator) * 100
+      const targetWeek = weekLabels[targetIdx] ?? weeks[targetIdx] ?? ''
+      const label = milestoneTargetMode === 'previousWeek'
+        ? `${Math.round(actual * 10) / 10}% (${targetWeek})`
+        : `${Math.round(actual * 10) / 10}%`
+      const current = map.get(milestone.week)
+      map.set(milestone.week, current ? `${current} / ${label}` : label)
+    }
+    return map
+  }
   const testSubmissionRateByWeek = rateByWeek('testSubmissionRate')
   const devResolutionRateByWeek = rateByWeek('devResolutionRate')
   const testCompletionRateByWeek = rateByWeek('testCompletionRate')
+  const actualTestSubmissionRateByWeek = actualRateByWeek('testSubmissionRate')
+  const actualDevResolutionRateByWeek = actualRateByWeek('devResolutionRate')
 
   const monthColor: Record<number, string> = {
     1: 'bg-sky-100',
@@ -235,6 +263,24 @@ export function ExcelTemplatePreview({
                   {weeks.map((w) => (
                     <td key={w} className="border p-2 text-center">
                       {testCompletionRateByWeek.get(w) ?? ''}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-indigo-50">
+                  <td className="border p-2">实际提交率</td>
+                  <td className="border p-2" />
+                  {weeks.map((w) => (
+                    <td key={w} className="border p-2 text-center">
+                      {actualTestSubmissionRateByWeek.get(w) ?? ''}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-orange-50">
+                  <td className="border p-2">实际解决率</td>
+                  <td className="border p-2" />
+                  {weeks.map((w) => (
+                    <td key={w} className="border p-2 text-center">
+                      {actualDevResolutionRateByWeek.get(w) ?? ''}
                     </td>
                   ))}
                 </tr>

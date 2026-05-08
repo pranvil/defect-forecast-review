@@ -65,6 +65,8 @@ from app.models import (
     JiraFetchResult,
     JiraConnectionTestRequest,
     JiraConnectionTestResult,
+    JiraCreateFilterRequest,
+    JiraCreateFilterResult,
     JiraFetchDebugInfo,
     ProjectHistory,
     ProjectSummary,
@@ -156,6 +158,35 @@ def jira_fetch_debug(project_key: str) -> JiraFetchDebugInfo:
 @app.post("/api/jira/test-connection", response_model=JiraConnectionTestResult)
 def jira_test_connection(req: JiraConnectionTestRequest) -> JiraConnectionTestResult:
     return test_jira_connection(req)
+
+
+@app.post("/api/jira/create-filter", response_model=JiraCreateFilterResult)
+def jira_create_filter(req: JiraCreateFilterRequest) -> JiraCreateFilterResult:
+    """在 Jira 中动态创建 saved filter，绕过 GET URL 长度限制（414）。"""
+    import time
+    from app.jira_client import jira_post
+    fetch_req = JiraFetchRequest(
+        projectKey="_",  # create-filter 不需要 projectKey
+        baseUrl=req.baseUrl,
+        authType=req.authType,
+        username=req.username,
+        token=req.token,
+        verifySsl=req.verifySsl,
+        timeoutSec=req.timeoutSec,
+    )
+    filter_name = req.filterName.strip() or f"DRP-temp-{int(time.time())}"
+    try:
+        result = jira_post(fetch_req, "/rest/api/2/filter", {"name": filter_name, "jql": req.jql})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    filter_id = str(result.get("id", ""))
+    if not filter_id:
+        raise HTTPException(status_code=502, detail="Jira 未返回 filter id，请检查权限")
+    base = req.baseUrl.strip().rstrip("/")
+    if not base.startswith("http"):
+        base = f"https://{base}"
+    filter_url = f"{base}/issues/?filter={filter_id}"
+    return JiraCreateFilterResult(filterId=filter_id, filterUrl=filter_url)
 
 
 @app.post("/api/block-issues/search", response_model=BlockIssueSearchResult)

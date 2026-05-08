@@ -61,6 +61,20 @@ IDH_SIMILARITY_WEIGHTS = (
 
 IDH_PROJECT_CATEGORIES = {"idh联合项目", "idh全o"}
 FR_QUANTITY_BANDS = (500, 1000, *range(1500, 20001, 500))
+FR_QUANTITY_RATIO_DELTAS = (
+    (0.50, -0.10),
+    (0.60, -0.08),
+    (0.70, -0.06),
+    (0.80, -0.04),
+    (0.90, -0.025),
+    (0.95, -0.01),
+    (1.05, 0.00),
+    (1.10, 0.01),
+    (1.20, 0.025),
+    (1.35, 0.04),
+    (1.50, 0.06),
+    (1.75, 0.08),
+)
 PIPELINE_FACTORS = {
     "全部": 1.08,
     "冒烟": 1.01,
@@ -85,8 +99,20 @@ DEFAULT_TEAMS: list[TeamConfigRow] = [
     TeamConfigRow(id="development-basic-app", name="基础应用开发部", type="development", enabled=True, note="系统应用开发中心-基础应用开发部-系统基础应用组，系统应用开发中心-基础应用开发部-门户基础应用组，系统应用开发中心-基础应用开发部-多媒体基础应用组，系统应用开发中心-基础应用开发部-应用技术组，系统应用开发中心-基础应用开发部，移动解决方案二中心-基础应用开发部-系统基础应用组，移动解决方案二中心-基础应用开发部-应用技术组，移动解决方案二中心-基础应用开发部-多媒体基础应用组，移动解决方案二中心-基础应用开发部-三方与平台应用组"),
     TeamConfigRow(id="development-independent-app", name="独立应用开发部", type="development", enabled=True, note="系统应用开发中心-独立应用开发部-网络服务组，系统应用开发中心-独立应用开发部-工具服务组，系统应用开发中心-独立应用开发部-桌面应用组，系统应用开发中心-独立应用开发部-武汉ODC组，系统应用开发中心-独立应用开发部-穿戴服务组，系统应用开发中心-独立应用开发部-内容平台组，互联网应用开发中心-独立应用开发部-桌面应用组，互联网应用开发中心-独立应用开发部-AI应用组，互联网应用开发中心-独立应用开发部-运营业务组，互联网应用开发中心-独立应用开发部-创新应用组"),
     TeamConfigRow(id="development-engineering-efficiency", name="工程效能部", type="development", enabled=True, note="系统技术中心-工程效能部-WSL工具开发组，系统技术中心-工程效能部-通讯项目交付组，系统技术中心-工程效能部-FCM平台开发组，系统技术中心-工程效能部-通讯交付组"),
-    TeamConfigRow(id="development-terminal-os", name="终端OS部", type="development", enabled=True, note="系统技术中心-终端OS部-性能解决方案组"),
-    TeamConfigRow(id="development-camera", name="Camera", type="development", enabled=True, note="MP PL-Tech.&Inno.-Camera LAB-APP Team，MP PL-R&D-Camera LAB-APP Team，MP PL-Tech.&Inno.-Camera LAB-HAL Team，MP PL-R&D-Camera LAB-HAL Team，MP PL-Tech.&Inno.-Camera LAB，MP PL-R&D-Camera LAB，MP PL-Tech.&Inno.-Camera LAB-Tuning Team，MP PL-R&D-Camera LAB-IQA Team，MP PL-R&D-Camera LAB-Tuning Team"),
+    TeamConfigRow(
+        id="development-terminal-os",
+        name="终端OS部",
+        type="development",
+        enabled=True,
+        note="系统技术中心-终端OS部-性能解决方案组，系统技术中心-终端OS部-系统优化组",
+    ),
+    TeamConfigRow(
+        id="development-camera",
+        name="Camera",
+        type="development",
+        enabled=True,
+        note="MP PL-Tech.&Inno.-Camera LAB-APP Team，MP PL-R&D-Camera LAB-APP Team，MP PL-Tech.&Inno.-Camera LAB-HAL Team，MP PL-R&D-Camera LAB-HAL Team，MP PL-Tech.&Inno.-Camera LAB，MP PL-R&D-Camera LAB，MP PL-Tech.&Inno.-Camera LAB-Tuning Team，MP PL-R&D-Camera LAB-IQA Team，MP PL-R&D-Camera LAB-Tuning Team，MP BU-R&D-Camlab-APP Team，MP BU-R&D-Camlab-CamPM Team，MP BU-R&D-Camlab-HAL Team，MP BU-R&D-Camlab-IQA Team，MP BU-R&D-Camlab-Tuning Team",
+    ),
 ]
 
 FIXED_TESTING_TEAMS = [row for row in DEFAULT_TEAMS if row.type == "testing"]
@@ -235,6 +261,9 @@ LEGACY_INITIAL_MILESTONES = [
 
 TESTING_TEAM_UNKNOWN = "测试未知团队"
 DEV_TEAM_UNKNOWN = "软件-未知团队"
+GOOGLE_XTS_TEAM = "Google XTS"
+PIPELINE_TEAM = "流水线"
+SWTC_DEVOPS_REPORTER = "swtc_devops"
 
 
 def _extract_reporter_identity(issue: dict[str, object]) -> str:
@@ -249,6 +278,37 @@ def _extract_reporter_identity(issue: dict[str, object]) -> str:
                 return text.split("@", 1)[0].strip() or text
             return text
     return ""
+
+
+def _normalized_token(value: str) -> str:
+    return "".join(value.strip().lower().split())
+
+
+def _extract_issue_components(issue: dict[str, object]) -> list[str]:
+    fields = _get_issue_fields(issue)
+    components = fields.get("components")
+    if not isinstance(components, list):
+        return []
+    out: list[str] = []
+    for item in components:
+        if isinstance(item, dict):
+            for key in ("name", "value"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    out.append(value.strip())
+                    break
+        elif isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def _resolve_swtc_devops_testing_team(issue: dict[str, object]) -> str:
+    reporter = _normalized_token(_extract_reporter_identity(issue))
+    if reporter != SWTC_DEVOPS_REPORTER:
+        return ""
+    if any(_normalized_token(component) == "googlexts" for component in _extract_issue_components(issue)):
+        return GOOGLE_XTS_TEAM
+    return PIPELINE_TEAM
 
 
 def _is_unknown_team_name(team_name: str) -> bool:
@@ -271,6 +331,9 @@ def _resolve_unknown_team_bucket(team_name: str, reporter: str, unknown_label: s
 
 
 def _normalize_reporter_team(issue: dict[str, object], field_path: str) -> str:
+    swtc_team = _resolve_swtc_devops_testing_team(issue)
+    if swtc_team:
+        return swtc_team
     t = _extract_issue_team(issue, field_path).strip()
     return _resolve_unknown_team_bucket(t, _extract_reporter_identity(issue), TESTING_TEAM_UNKNOWN)
 
@@ -1124,6 +1187,20 @@ def _fr_band_similarity(input_value: object, project_value: object) -> float | N
     return 0.0
 
 
+def _fr_quantity_delta(input_value: object, reference_average: float) -> float:
+    try:
+        number = float(input_value)
+    except (TypeError, ValueError):
+        return 0.0
+    if number <= 0 or reference_average <= 0:
+        return 0.0
+    ratio = number / reference_average
+    for upper, delta in FR_QUANTITY_RATIO_DELTAS:
+        if ratio <= upper:
+            return delta
+    return 0.10
+
+
 def _field_similarity(input_data: ForecastInput, project: ProjectSummary, field_name: str) -> float | None:
     if field_name == "operatorOverlap":
         return _operator_overlap(input_data.params.operators, project.operators)
@@ -1193,7 +1270,9 @@ def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[Projec
     params = input_data.params
     chipset_newness = _chipset_newness_from(params.chipsetNewness, params.chipsetStatus)
     chipset = 1.2 if _normalize_comparable(chipset_newness) == "new" else 1.0
-    operators = min(1.0 + len(params.operators) * 0.1, 1.5)
+    operator_count = len(params.operators)
+    operator_increase = max(0.0, float(operator_count - 1) * 0.1)
+    operators = min(1.0 + operator_increase, 1.5)
     user_program_count = len(params.userPrograms)
     user_program_increase = (
         0.0
@@ -1202,6 +1281,13 @@ def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[Projec
     )
     support_sim = 0.8 if params.supportSim == "No" else 1.0
     pipeline = PIPELINE_FACTORS.get(str(params.pipeline or "").strip(), 1.0)
+    historical_fr = [
+        float(project.frQuantity)
+        for project, _ in top_projects
+        if project.frQuantity is not None and float(project.frQuantity) > 0
+    ]
+    avg_fr = sum(historical_fr) / len(historical_fr) if historical_fr else 0.0
+    fr_quantity = 1.0 + _fr_quantity_delta(params.frQuantity, avg_fr)
 
     historical_mm = [
         float(project.mm)
@@ -1210,7 +1296,7 @@ def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[Projec
     ]
     if params.mm and params.mm > 0 and historical_mm:
         avg_mm = sum(historical_mm) / len(historical_mm)
-        mm = 1.0 + _clamp((float(params.mm) / avg_mm - 1.0) * 0.8, -0.2, 0.2)
+        mm = 1.0 + _clamp((float(params.mm) / avg_mm - 1.0) * 0.4, -0.2, 0.2)
     else:
         mm = 1.0
 
@@ -1221,7 +1307,43 @@ def _forecast_factors(input_data: ForecastInput, top_projects: list[tuple[Projec
         "supportSim": support_sim,
         "mm": mm,
         "pipeline": pipeline,
+        "frQuantity": fr_quantity,
     }
+
+
+def _project_factors(project: ProjectSummary) -> dict[str, float]:
+    chipset_newness = _chipset_newness_from(project.chipsetNewness or "", project.chipsetStatus or "")
+    chipset = 1.2 if _normalize_comparable(chipset_newness) == "new" else 1.0
+
+    operator_count = len(project.operators or [])
+    operator_increase = max(0.0, float(operator_count - 1) * 0.1)
+    operators = min(1.0 + operator_increase, 1.5)
+
+    user_program_count = len(project.userPrograms or [])
+    user_program_increase = (
+        0.0
+        if user_program_count <= 0
+        else min(0.25, 0.1 + max(0, user_program_count - 1) * 0.05)
+    )
+    support_sim = 0.8 if project.supportSim == "No" else 1.0
+    pipeline = PIPELINE_FACTORS.get(str(project.pipeline or "").strip(), 1.0)
+
+    return {
+        "chipset": chipset,
+        "operators": operators,
+        "userPrograms": 1.0 + user_program_increase,
+        "supportSim": support_sim,
+        "pipeline": pipeline,
+    }
+
+
+def _avg_reference_factors(top_projects: list[tuple[ProjectSummary, float]]) -> dict[str, float]:
+    # 相对加成口径：参考项目的 factor 取简单平均（不使用 similarity 加权）
+    rows = [_project_factors(project) for project, _ in top_projects]
+    out: dict[str, float] = {}
+    for key in rows[0].keys():
+        out[key] = sum(r[key] for r in rows) / len(rows)
+    return out
 
 
 def _predict_defect_total(input_data: ForecastInput) -> tuple[int, int, list[dict[str, object]], dict[str, float]]:
@@ -1238,21 +1360,22 @@ def _predict_defect_total(input_data: ForecastInput) -> tuple[int, int, list[dic
         if not top_projects:
             raise ValueError("没有相似度大于 0 的历史项目，无法预测 Defect 总数")
 
-    similarity_sum = sum(score for _, score in top_projects)
-    if similarity_sum <= 0:
-        raise ValueError("相似项目相似度总和为 0，无法计算基准值")
-
-    base_value = sum(project.defects * score for project, score in top_projects) / similarity_sum
+    # 文档口径：baseValue 为参考项目 defects 的简单平均；similarity 仅用于展示/记录，不参与 baseValue 加权。
+    base_value = sum(project.defects for project, _ in top_projects) / len(top_projects)
     factors = _forecast_factors(input_data, top_projects)
+    ref_factors = _avg_reference_factors(top_projects)
     estimated = round(
         base_value
-        * max(0.1, 1 
-              + (factors["chipset"] - 1) 
-              + (factors["operators"] - 1) 
-              + (factors["userPrograms"] - 1) 
-              + (factors["supportSim"] - 1) 
-              + (factors["mm"] - 1) 
-              + (factors["pipeline"] - 1)
+        * max(
+            0.1,
+            1
+            + ((factors["chipset"] - 1) - (ref_factors["chipset"] - 1))
+            + ((factors["operators"] - 1) - (ref_factors["operators"] - 1))
+            + ((factors["userPrograms"] - 1) - (ref_factors["userPrograms"] - 1))
+            + ((factors["supportSim"] - 1) - (ref_factors["supportSim"] - 1))
+            + (factors["mm"] - 1)
+            + ((factors["pipeline"] - 1) - (ref_factors["pipeline"] - 1))
+            + (factors["frQuantity"] - 1)
         )
     )
     reference_projects = [
@@ -1440,7 +1563,7 @@ def delete_cached_project(project_name: str) -> bool:
     return True
 
 
-FORECAST_CONFLICT_THRESHOLD_PERCENT = 12
+FORECAST_FINAL_BACKLOG_RATIO = 0.002
 
 
 def _round_to_total(raw: list[float], target_total: int) -> list[int]:
@@ -1467,6 +1590,7 @@ def _collect_rate_constraints(
     weekly: list[WeeklyPoint],
     milestones: list[MilestoneParam],
     metric: str,
+    target_mode: str = "currentWeek",
 ) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for milestone in milestones:
@@ -1474,34 +1598,55 @@ def _collect_rate_constraints(
         index = _week_index(weekly, milestone.week)
         if index < 0 or rate is None:
             continue
-        index = max(0, index - 1)
+        if target_mode == "previousWeek":
+            index = max(0, index - 1)
         out.append(
             {
                 "milestone": milestone.name,
                 "week": milestone.week,
                 "index": index,
-                "rate": max(1.0, min(99.0, float(rate))),
+                "rate": max(1.0, min(100.0, float(rate))),
                 "metric": metric,
             }
         )
     return sorted(out, key=lambda x: int(x["index"]))
 
 
-def _infer_peak_index(length: int, constraints: list[dict[str, object]]) -> float:
-    if not constraints:
-        return (length - 1) / 2
-    sigma = max(1.5, length / 5)
-    normal = NormalDist()
-    estimates = [
-        int(c["index"]) - sigma * normal.inv_cdf(max(0.001, min(0.999, float(c["rate"]) / 100)))
-        for c in constraints
-    ]
-    return max(0.0, min(length - 1, sum(estimates) / len(estimates)))
+def _lifecycle_created_weights(length: int) -> list[float]:
+    if length <= 1:
+        return [1.0 for _ in range(length)]
+    out: list[float] = []
+    for idx in range(length):
+        ratio = idx / (length - 1)
+        if ratio < 0.18:
+            out.append(0.78 + 0.24 * (ratio / 0.18))
+        elif ratio < 0.55:
+            out.append(1.02)
+        elif ratio < 0.82:
+            out.append(1.02 + (0.28 - 1.02) * ((ratio - 0.55) / 0.27))
+        else:
+            out.append(max(0.04, 0.28 + (0.04 - 0.28) * ((ratio - 0.82) / 0.18)))
+    return out
 
 
-def _gaussian_weights(length: int, peak_index: float) -> list[float]:
-    sigma = max(1.5, length / 5)
-    return [math.exp(-0.5 * ((idx - peak_index) / sigma) ** 2) for idx in range(length)]
+def _smooth_created_forward_spikes(values: list[int], window: int = 4) -> list[int]:
+    out = values[:]
+    for source in range(1, len(out)):
+        guard = 0
+        while guard < 1000:
+            guard += 1
+            previous = out[source - 1]
+            limit = max(previous + 20, round(previous * 1.15))
+            if out[source] <= limit:
+                break
+            start = max(0, source - int(window))
+            targets = sorted(range(start, source), key=lambda idx: (out[idx], -idx))
+            if not targets:
+                break
+            target = targets[0]
+            out[source] -= 1
+            out[target] += 1
+    return out
 
 
 def _cumulative(values: list[int | float]) -> list[float]:
@@ -1513,54 +1658,32 @@ def _cumulative(values: list[int | float]) -> list[float]:
     return out
 
 
-def _suggested_week_for_rate(weekly: list[WeeklyPoint], cdf: list[float], rate: float) -> str:
-    target = rate / 100
-    if not cdf:
-        return ""
-    idx = min(range(len(cdf)), key=lambda i: abs(cdf[i] - target))
-    return weekly[idx].weekLabel if idx < len(weekly) else ""
-
-
-def _constraint_warnings(
-    weekly: list[WeeklyPoint],
-    constraints: list[dict[str, object]],
-    weights: list[float],
-    denominator_by_index: list[int] | None = None,
-) -> list[ForecastWarning]:
-    total = sum(weights) or 1
-    cdf = [v / total for v in _cumulative(weights)]
-    out: list[ForecastWarning] = []
-    for c in constraints:
-        idx = int(c["index"])
-        rate = float(c["rate"])
-        denominator = denominator_by_index[idx] if denominator_by_index and idx < len(denominator_by_index) else 0
-        if denominator:
-            final_denominator = denominator_by_index[-1] if denominator_by_index else denominator
-            suggested_rate = round(((cdf[idx] if idx < len(cdf) else 0) * final_denominator / denominator) * 100)
-        else:
-            suggested_rate = round((cdf[idx] if idx < len(cdf) else 0) * 100)
-        delta = abs(suggested_rate - rate)
-        if delta <= FORECAST_CONFLICT_THRESHOLD_PERCENT:
+def _tail_reserve_from_actual_backlog(
+    created: list[int],
+    fixed: list[int],
+    tail_start_index: int,
+    final_backlog: int,
+) -> list[int]:
+    n = max(len(created), len(fixed))
+    if n <= 0:
+        return []
+    created_cum = _cumulative(created[:n])
+    fixed_cum = _cumulative(fixed[:n])
+    tail = max(0, min(n - 1, int(tail_start_index)))
+    backlog_at_tail = max(0, int(created_cum[tail]) - int(fixed_cum[tail]))
+    end = max(tail + 1, n - 1)
+    span = max(1, end - tail)
+    reserve: list[int] = []
+    for idx in range(n):
+        if idx < tail:
+            reserve.append(0)
             continue
-        metric = str(c["metric"])
-        metric_label = "测试提交率" if metric == "testSubmissionRate" else "开发解决率"
-        suggested_week = _suggested_week_for_rate(weekly, cdf, rate)
-        milestone = str(c["milestone"])
-        week = str(c["week"])
-        out.append(
-            ForecastWarning(
-                type="milestone_conflict",
-                severity="warning",
-                milestone=milestone,
-                metric=metric,  # type: ignore[arg-type]
-                currentRate=rate,
-                suggestedRate=suggested_rate,
-                currentWeek=week,
-                suggestedWeek=suggested_week,
-                message=f"{milestone} 的{metric_label} {rate:g}% 与钟形分布偏离 {round(delta)} 个百分点，建议指标调整到 {suggested_rate}% 或将节点周期调整到 {suggested_week}",
-            )
-        )
-    return out
+        t = (idx - tail) / span
+        v = int(round(backlog_at_tail + (int(final_backlog) - backlog_at_tail) * t))
+        reserve.append(max(int(final_backlog), v))
+    for i in range(tail + 1, n):
+        reserve[i] = min(reserve[i], reserve[i - 1])
+    return reserve
 
 
 def _distribute_by_constraints(
@@ -1613,6 +1736,162 @@ def _distribute_by_constraints(
     return values
 
 
+def _distribute_increasing_by_constraints(
+    total: int,
+    length: int,
+    constraints: list[dict[str, object]],
+    max_cum_by_index: list[float] | None = None,
+    warnings: list[ForecastWarning] | None = None,
+) -> list[int]:
+    values = [0 for _ in range(length)]
+    prev_index = -1
+    prev_cum = 0
+    points_by_index: dict[int, int] = {}
+    for c in constraints:
+        idx = int(c["index"])
+        requested_cum = int(c.get("targetCum", round(total * float(c["rate"]) / 100)))
+        capped_cum = min(requested_cum, int(max_cum_by_index[idx])) if max_cum_by_index else requested_cum
+        if warnings is not None and capped_cum < requested_cum:
+            suggested_rate = round(capped_cum / max(1, total) * 100)
+            milestone = str(c["milestone"])
+            rate = float(c["rate"])
+            warnings.append(
+                ForecastWarning(
+                    type="milestone_conflict",
+                    severity="warning",
+                    milestone=milestone,
+                    metric=c["metric"],  # type: ignore[arg-type]
+                    currentRate=rate,
+                    suggestedRate=suggested_rate,
+                    currentWeek=str(c["week"]),
+                    message=f"{milestone} 的开发解决率 {rate:g}% 会让 Backlog 过低，已按保留合理 Backlog 的上限 {suggested_rate}% 计算。",
+                )
+            )
+        points_by_index[idx] = max(points_by_index.get(idx, 0), capped_cum)
+    points_by_index[length - 1] = total
+    points = [{"index": index, "cum": cum} for index, cum in points_by_index.items()]
+    for point in sorted(points, key=lambda x: int(x["index"])):
+        end = min(length - 1, max(prev_index + 1, int(point["index"])))
+        target_cum = max(prev_cum, min(total, int(point["cum"])))
+        amount = target_cum - prev_cum
+        span_length = end - prev_index
+        if span_length <= 0:
+            prev_index = end
+            prev_cum = target_cum
+            continue
+        base = amount // span_length
+        remainder = amount - base * span_length
+        for i in range(span_length):
+            idx = prev_index + 1 + i
+            values[idx] = base + (1 if i >= span_length - remainder else 0)
+        prev_index = end
+        prev_cum = target_cum
+    return values
+
+
+def _move_total(values: list[int], from_indexes: list[int], to_indexes: list[int], amount: int, min_values: list[int] | None = None) -> int:
+    remaining = max(0, int(amount))
+    for from_idx in from_indexes:
+        if remaining <= 0:
+            break
+        available = values[from_idx] if 0 <= from_idx < len(values) else 0
+        reserved = min_values[from_idx] if min_values and 0 <= from_idx < len(min_values) else 0
+        movable = max(0, available - reserved)
+        if movable <= 0:
+            continue
+        moved = min(movable, remaining)
+        values[from_idx] = available - moved
+        remaining -= moved
+        left = moved
+        targets = sorted(
+            [{"idx": idx, "value": values[idx]} for idx in to_indexes if 0 <= idx < len(values)],
+            key=lambda item: (int(item["value"]), int(item["idx"])),
+        )
+        for target in targets:
+            if left <= 0:
+                break
+            values[int(target["idx"])] += 1
+            left -= 1
+        cursor = 0
+        while left > 0 and targets:
+            target = targets[cursor % len(targets)]
+            values[int(target["idx"])] += 1
+            left -= 1
+            cursor += 1
+    return int(amount) - remaining
+
+
+def _enforce_minimum_cumulative(
+    values: list[int],
+    total: int,
+    constraints: list[dict[str, object]],
+    max_cum_by_index: list[int] | None = None,
+    min_values: list[int] | None = None,
+) -> list[int]:
+    out = values[:]
+    for c in constraints:
+        idx = max(0, min(len(out) - 1, int(c["index"])))
+        requested = int(c.get("targetCum", round(total * float(c["rate"]) / 100)))
+        target = min(requested, int(max_cum_by_index[idx])) if max_cum_by_index else requested
+        current = sum(out[: idx + 1])
+        deficit = max(0, target - current)
+        if not deficit:
+            continue
+        from_indexes = [i for i in range(len(out) - 1, idx, -1)]
+        to_indexes = list(range(0, idx + 1))
+        _move_total(out, from_indexes, to_indexes, deficit, min_values)
+    return out
+
+
+def _distribute_smooth_by_minimum_constraints(
+    total: int,
+    weights: list[float],
+    constraints: list[dict[str, object]],
+    max_cum_by_index: list[int] | None = None,
+    min_values: list[int] | None = None,
+) -> list[int]:
+    total_weight = sum(weights) or len(weights) or 1
+    minimums = [max(0, int(v)) for v in min_values] if min_values else [0 for _ in weights]
+    min_total = sum(minimums)
+    base = minimums if min_total <= total else [0 for _ in weights]
+    remaining = max(0, total - sum(base))
+    seeded = [
+        value + base[idx]
+        for idx, value in enumerate(_round_to_total([remaining * w / total_weight for w in weights], remaining))
+    ]
+    return _enforce_minimum_cumulative(seeded, total, constraints, max_cum_by_index, min_values)
+
+
+def _spread_surplus_after_high_rate_milestones(
+    values: list[int],
+    total: int,
+    constraints: list[dict[str, object]],
+    min_values: list[int],
+) -> list[int]:
+    out = values[:]
+    slack = round(total * 0.04)
+    high_rate_constraints = sorted(
+        [constraint for constraint in constraints if float(constraint["rate"]) >= 85],
+        key=lambda constraint: int(constraint["index"]),
+        reverse=True,
+    )
+    for constraint in high_rate_constraints:
+        idx = max(0, min(len(out) - 1, int(constraint["index"])))
+        if idx >= len(out) - 1:
+            continue
+        target = round(total * float(constraint["rate"]) / 100)
+        cap = min(total, target + slack)
+        current = sum(out[: idx + 1])
+        surplus = max(0, current - cap)
+        if surplus <= 0:
+            continue
+        from_indexes = list(range(idx, -1, -1))
+        to_indexes = list(range(idx + 1, len(out)))
+        _move_total(out, from_indexes, to_indexes, surplus, min_values)
+        out = _enforce_minimum_cumulative(out, total, constraints, None, min_values)
+    return out
+
+
 def _enforce_fixed_availability(fixed: list[int], created: list[int]) -> list[int]:
     out = fixed[:]
     created_cum = _cumulative(created)
@@ -1627,6 +1906,129 @@ def _enforce_fixed_availability(fixed: list[int], created: list[int]) -> list[in
     return out
 
 
+def _enforce_tail_backlog_non_increasing(fixed: list[int], created: list[int], tail_start_index: int) -> list[int]:
+    out = fixed[:]
+    backlog = 0
+    for idx in range(len(out)):
+        previous_backlog = backlog
+        backlog += int(created[idx]) - int(out[idx])
+        if idx <= tail_start_index or backlog <= previous_backlog:
+            continue
+        needed = backlog - previous_backlog
+        pulled = 0
+        for j in range(idx + 1, len(out)):
+            if pulled >= needed:
+                break
+            available = out[j]
+            if available <= 0:
+                continue
+            take = min(available, needed - pulled)
+            out[j] -= take
+            out[idx] += take
+            pulled += take
+        backlog -= pulled
+    return _enforce_fixed_availability(out, created)
+
+
+def _front_load_fixed(
+    fixed: list[int],
+    created: list[int],
+    reserve_by_index: list[int],
+    tail_start_index: int,
+) -> list[int]:
+    out = fixed[:]
+    created_cum = _cumulative(created)
+    start = max(1, int(tail_start_index) + 1)
+    for source in range(start, len(out)):
+        movable = out[source]
+        while movable > 0:
+            candidate = out[:]
+            candidate[source] -= 1
+            fixed_cum = 0
+            target = -1
+            for idx in range(source):
+                reserve = int(reserve_by_index[idx]) if idx < len(reserve_by_index) else 0
+                backlog_before = int(created_cum[idx]) - fixed_cum
+                if backlog_before <= reserve:
+                    fixed_cum += candidate[idx]
+                    continue
+                if idx < tail_start_index:
+                    fixed_cum += candidate[idx]
+                    continue
+                if fixed_cum + candidate[idx] + 1 <= max(0, int(created_cum[idx]) - reserve):
+                    target = idx
+                    break
+                fixed_cum += candidate[idx]
+            if target < 0:
+                break
+            candidate[target] += 1
+            normalized = _enforce_fixed_availability(candidate, created)
+            if normalized[source] != candidate[source] or normalized[target] != candidate[target]:
+                break
+            out[source] -= 1
+            out[target] += 1
+            movable -= 1
+    return out
+
+
+def _tail_backlog_is_valid(fixed: list[int], created: list[int], tail_start_index: int) -> bool:
+    backlog = 0
+    for idx in range(len(fixed)):
+        previous_backlog = backlog
+        backlog += int(created[idx]) - int(fixed[idx])
+        if backlog < 0:
+            return False
+        if idx > tail_start_index and backlog > previous_backlog:
+            return False
+    return True
+
+
+def _smooth_tail_fixed_spikes(fixed: list[int], created: list[int], tail_start_index: int) -> list[int]:
+    out = fixed[:]
+    start = max(0, tail_start_index)
+    for source in range(len(out) - 1, start, -1):
+        guard = 0
+        while guard < 200:
+            guard += 1
+            targets = sorted(range(start, source), key=lambda idx: (out[idx], -idx))
+            if not targets:
+                break
+            target = targets[0]
+            if out[source] <= out[target]:
+                break
+            candidate = out[:]
+            candidate[source] -= 1
+            candidate[target] += 1
+            if not _tail_backlog_is_valid(candidate, created, tail_start_index):
+                break
+            out = candidate
+    return out
+
+
+def _smooth_convergence_boundary_fixed_spike(fixed: list[int], created: list[int], tail_start_index: int, window: int = 2) -> list[int]:
+    out = fixed[:]
+    source = int(tail_start_index)
+    if source <= 0 or source >= len(out):
+        return out
+    start = max(1, source - int(window) + 1)
+    guard = 0
+    while guard < 400:
+        guard += 1
+        if out[source] <= out[source - 1] + 1:
+            break
+        target = source - 1
+        if target < start:
+            break
+        candidate = out[:]
+        candidate[source] -= 1
+        candidate[target] += 1
+        normalized = _enforce_fixed_availability(candidate, created)
+        if normalized[source] != candidate[source] or normalized[target] != candidate[target]:
+            break
+        out = normalized
+    return out
+
+
 def _backlog_reserve_by_index(total: int, length: int) -> list[int]:
     if length <= 1 or total <= 0:
         return [0 for _ in range(length)]
@@ -1637,16 +2039,74 @@ def _backlog_reserve_by_index(total: int, length: int) -> list[int]:
     ]
 
 
+def _is_version_milestone(name: str) -> bool:
+    return bool(re.match(r"^v\d*$", (name or "").strip(), re.IGNORECASE))
+
+
+def _is_convergence_milestone(name: str) -> bool:
+    raw = (name or "").strip()
+    return bool(re.match(r"^m5(?:-\d+)?$", raw, re.IGNORECASE)) or _is_version_milestone(raw)
+
+
+def _infer_tail_start_index(base_weekly: list[WeeklyPoint], milestones: list[MilestoneParam]) -> int:
+    weeks = [m.week.strip() for m in milestones if _is_convergence_milestone(m.name) and m.week.strip()]
+    if not weeks:
+        return max(0, len(base_weekly) - 2)
+    earliest = sorted(weeks, key=_parse_week_label)[0]
+    idx = _week_index(base_weekly, earliest)
+    return idx if idx >= 0 else max(0, len(base_weekly) - 2)
+
+
+def _infer_version_start_index(base_weekly: list[WeeklyPoint], milestones: list[MilestoneParam]) -> int:
+    weeks = [m.week.strip() for m in milestones if _is_version_milestone(m.name) and m.week.strip()]
+    if not weeks:
+        return len(base_weekly)
+    earliest = sorted(weeks, key=_parse_week_label)[0]
+    idx = _week_index(base_weekly, earliest)
+    return idx if idx >= 0 else len(base_weekly)
+
+
+def _final_backlog_target(total_created: int) -> int:
+    total = max(0, int(round(total_created)))
+    return max(1, int(round(total * FORECAST_FINAL_BACKLOG_RATIO)))
+
+
+def _backlog_reserve_shape(total_created: int, length: int, tail_start_index: int, final_target: int) -> list[int]:
+    if length <= 1 or total_created <= 0:
+        return [0 for _ in range(length)]
+    tail = max(0, min(length - 1, int(tail_start_index)))
+    peak = max(final_target, int(round(total_created * 0.1)))
+    out: list[int] = []
+    for idx in range(length):
+        if idx <= 0:
+            out.append(0)
+            continue
+        if idx >= length - 1:
+            out.append(final_target)
+            continue
+        if idx <= tail:
+            ratio = 0.0 if tail <= 0 else idx / tail
+            out.append(int(round(peak * math.sin(math.pi / 2 * ratio))))
+        else:
+            span = max(1, (length - 1) - tail)
+            ratio = (idx - tail) / span
+            out.append(int(round(peak + (final_target - peak) * ratio)))
+    for i in range(max(1, tail + 1), length - 1):
+        out[i] = min(out[i], out[i - 1])
+    return [max(0, v) for v in out]
+
+
 def _build_forecast_weekly_distribution(
     base_weekly: list[WeeklyPoint],
     milestones: list[MilestoneParam],
     total_defects: int,
+    target_mode: str = "currentWeek",
 ) -> tuple[list[WeeklyPoint], list[ForecastWarning]]:
     target = max(0, round(total_defects))
-    created_constraints = _collect_rate_constraints(base_weekly, milestones, "testSubmissionRate")
-    created_weights = _gaussian_weights(len(base_weekly), _infer_peak_index(len(base_weekly), created_constraints))
-    created = _distribute_by_constraints(target, created_weights, created_constraints)
-    fixed_constraints = _collect_rate_constraints(base_weekly, milestones, "devResolutionRate")
+    created_constraints = _collect_rate_constraints(base_weekly, milestones, "testSubmissionRate", target_mode)
+    tail_start_index = _infer_tail_start_index(base_weekly, milestones)
+    created = _distribute_increasing_by_constraints(target, len(base_weekly), created_constraints)
+    fixed_constraints = _collect_rate_constraints(base_weekly, milestones, "devResolutionRate", target_mode)
     created_cum = _cumulative(created)
     fixed_constraints_by_created = [
         {
@@ -1659,11 +2119,42 @@ def _build_forecast_weekly_distribution(
         (created[idx - 1] if idx > 0 else 0) + (created[idx - 2] if idx > 1 else 0) * 0.8 + 1
         for idx in range(len(created))
     ]
+    last_fixed_constraint = fixed_constraints[-1] if fixed_constraints else None
+    final_backlog = 0 if last_fixed_constraint and float(last_fixed_constraint["rate"]) >= 100 else _final_backlog_target(target)
+    default_fixed_total = max(0, int(target) - int(final_backlog))
+    fixed_total = min(
+        int(target),
+        max(
+            [default_fixed_total]
+            + [int(constraint.get("targetCum", 0)) for constraint in fixed_constraints_by_created]
+        ),
+    )
+    reserve = _backlog_reserve_shape(target, len(base_weekly), tail_start_index, final_backlog)
+    if tail_start_index >= 0 and reserve:
+        for i in range(tail_start_index, len(fixed_weights)):
+            reserve_pressure = 1.0 + max(0, int(reserve[tail_start_index]) - int(reserve[i])) / max(1, int(target))
+            fixed_weights[i] *= reserve_pressure
     cap_warnings: list[ForecastWarning] = []
-    fixed = _enforce_fixed_availability(
-        _distribute_by_constraints(target, fixed_weights, fixed_constraints_by_created, created_cum, cap_warnings),
+    fixed_avail = _enforce_fixed_availability(
+        _distribute_increasing_by_constraints(fixed_total, len(base_weekly), fixed_constraints_by_created, created_cum, cap_warnings),
         created,
     )
+    tail_reserve = _tail_reserve_from_actual_backlog(created, fixed_avail, tail_start_index, final_backlog)
+    fixed = _smooth_tail_fixed_spikes(
+        _enforce_tail_backlog_non_increasing(
+            _front_load_fixed(
+                fixed_avail,
+                created,
+                tail_reserve,
+                tail_start_index,
+            ),
+            created,
+            tail_start_index,
+        ),
+        created,
+        tail_start_index,
+    )
+    fixed = _smooth_convergence_boundary_fixed_spike(fixed, created, tail_start_index, window=2)
     weekly: list[WeeklyPoint] = []
     cum_created = 0
     cum_fixed = 0
@@ -1682,10 +2173,7 @@ def _build_forecast_weekly_distribution(
                 backlog=cum_created - cum_fixed,
             )
         )
-    warnings = _constraint_warnings(base_weekly, created_constraints, created_weights)
-    warnings.extend(_constraint_warnings(base_weekly, fixed_constraints_by_created, fixed_weights, created_cum))
-    warnings.extend(cap_warnings)
-    return weekly, warnings
+    return weekly, cap_warnings
 
 
 def _team_aliases(team: object) -> list[str]:
@@ -1747,11 +2235,42 @@ def _allocate_teams_from_history(
         if not teams:
             return []
         totals = _team_totals(histories, field, team_configs)
-        selected_total = sum(totals.get(team, 0) for team in teams)
-        missing_teams = [team for team in teams if totals.get(team, 0) == 0]
+        config_by_name = {str(getattr(config, "name", "")): config for config in team_configs}
+
+        def manual_ratio(team: str) -> float | None:
+            raw = getattr(config_by_name.get(team), "forecastRatio", None)
+            if raw is None:
+                return None
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(value) or value <= 0:
+                return None
+            return min(100.0, value)
+
+        manual_ratios = {team: ratio for team in teams if (ratio := manual_ratio(team)) is not None}
+        missing_teams = [team for team in teams if totals.get(team, 0) == 0 and team not in manual_ratios]
         if missing_teams:
             names = ", ".join(missing_teams)
             raise ValueError(f"勾选的{label} '{names}' 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。")
+        manual_sum = sum(manual_ratios.values())
+        if manual_sum > 0:
+            remaining_teams = [team for team in teams if team not in manual_ratios]
+            remaining_total = sum(totals.get(team, 0) for team in remaining_teams)
+            remaining_share = max(0.0, 100.0 - manual_sum)
+            weights = []
+            for team in teams:
+                if team in manual_ratios:
+                    weights.append(manual_ratios[team])
+                elif remaining_total > 0:
+                    weights.append(remaining_share * totals.get(team, 0) / remaining_total)
+                else:
+                    weights.append(0.0)
+            weight_total = sum(weights)
+            if weight_total > 0:
+                return [weight / weight_total for weight in weights]
+        selected_total = sum(totals.get(team, 0) for team in teams)
         return [totals.get(team, 0) / selected_total for team in teams]
 
     created_ratios = ratios_for(effective_testing_teams, "createdTeams", testing_team_configs, "测试团队")
@@ -1865,6 +2384,7 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
         _make_weekly(seed, input_data.params.startWeek, effective_end_week),
         input_data.milestones,
         estimated_defects,
+        input_data.milestoneTargetMode or input_data.params.milestoneTargetMode,
     )
 
     history_names = [row.project for row in input_data.refProjects] or [row.name for row in reference_projects]
@@ -2070,6 +2590,7 @@ def jira_sync(req: JiraFetchRequest) -> JiraFetchResult:
     reporter_team_field = issue_fields["reporterTeam"]
     assignee_team_field = issue_fields["assigneeTeam"]
     fetch_fields = {
+        "components",
         "summary",
         "reporter",
         verified_field,
@@ -2336,10 +2857,26 @@ def _load_weekly(project_name: str, source: str, forecast_version_id: str = "") 
     ]
 
 
+def _latest_forecast_version_id(project_name: str) -> str:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM forecast_version
+            WHERE project_name = ? AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (project_name,),
+        ).fetchone()
+    return str(row["id"]) if row else ""
+
+
 def build_compare(project_name: str, forecast_version_id: str | None) -> CompareResponse:
     history = _load_weekly(project_name, "history", "")
     jira = _load_weekly(project_name, "jira", "")
-    forecast = _load_weekly(project_name, "forecast", forecast_version_id or "")
+    effective_forecast_version_id = forecast_version_id or _latest_forecast_version_id(project_name)
+    forecast = _load_weekly(project_name, "forecast", effective_forecast_version_id)
     if not history and not jira and not forecast:
         raise ValueError(f"No compare data for project {project_name}")
 
@@ -2382,7 +2919,7 @@ def build_compare(project_name: str, forecast_version_id: str | None) -> Compare
     )
     return CompareResponse(
         projectName=project_name,
-        forecastVersionId=forecast_version_id,
+        forecastVersionId=effective_forecast_version_id or None,
         metrics=metrics,
         weekly=series,
     )

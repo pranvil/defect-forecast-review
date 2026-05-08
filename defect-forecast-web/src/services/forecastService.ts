@@ -11,6 +11,7 @@ export type ForecastParams = ForecastProjectParams
 
 export interface ForecastInput {
   params: ForecastParams
+  milestoneTargetMode?: 'currentWeek' | 'previousWeek'
   enabledTestingTeams: string[]
   enabledDevTeams: string[]
   testingTeamConfigs?: TeamItem[]
@@ -47,6 +48,7 @@ export interface ForecastFactors {
   supportSim: number
   mm: number
   pipeline: number
+  frQuantity: number
 }
 
 export interface ForecastWarning {

@@ -10,6 +10,7 @@ type TeamWeeklyRow = {
   team: string
   group: string
   values: number[]
+  issueKeysByWeek: string[][]
   total: number
 }
 

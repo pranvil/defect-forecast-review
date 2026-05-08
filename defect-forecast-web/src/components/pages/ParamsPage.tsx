@@ -86,7 +86,7 @@ import {
 } from '@/components/ui/dialog'
 import type { ForecastDataset, ForecastResult } from '@/services/forecastService'
 import type { MilestoneLabel } from '@/types/project'
-import type { MilestoneParam, RefProjectRow } from '@/types/forecast'
+import type { ForecastProjectParams, MilestoneParam, RefProjectRow } from '@/types/forecast'
 
 function AdjustableInput({ value, onChange, className }: { value: number, onChange: (val: number) => void, className?: string }) {
   const [local, setLocal] = React.useState<string>(String(value))
@@ -135,6 +135,10 @@ function optionalRateFromForm(s: string): number | undefined {
 
 function formatOptionalPercent(n: number | null | undefined): string {
   return n == null ? '—' : `${n}%`
+}
+
+function formatRateInput(n: number | null | undefined): string {
+  return n == null ? '' : String(n)
 }
 
 /** 由周期与日期输入得到规范化的周次 + 周一 ISO 日期；无法推算则返回 null。 */
@@ -221,6 +225,8 @@ export function ParamsPage() {
   const refProjects = useForecastStore((s) => s.refProjects)
   const removeRefProject = useForecastStore((s) => s.removeRefProject)
   const milestones = useForecastStore((s) => s.milestones)
+  const setMilestones = useForecastStore((s) => s.setMilestones)
+  const resetMilestonesToSystemPreset = useForecastStore((s) => s.resetMilestonesToSystemPreset)
   const addRefProject = useForecastStore((s) => s.addRefProject)
   const updateRefProject = useForecastStore((s) => s.updateRefProject)
   const addMilestone = useForecastStore((s) => s.addMilestone)
@@ -233,6 +239,7 @@ export function ParamsPage() {
   const setParams = useForecastStore((s) => s.setParams)
   const openProjectDetail = useProjectStore((s) => s.openProjectDetail)
   const teams = useTeamStore((s) => s.teams)
+  const updateTeam = useTeamStore((s) => s.updateTeam)
   const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
 
   const testingTeams = React.useMemo(() => teams.filter((x) => x.type === 'testing'), [teams])
@@ -367,9 +374,16 @@ export function ParamsPage() {
     [devTeams, teamSelection.development],
   )
 
+  const updateTeamForecastRatio = React.useCallback((teamId: string, raw: string) => {
+    const team = useTeamStore.getState().teams.find((row) => row.id === teamId)
+    if (!team) return
+    updateTeam({ ...team, forecastRatio: optionalRateFromForm(raw) ?? null })
+  }, [updateTeam])
+
   const forecastInput = React.useMemo(
     () => ({
       params,
+      milestoneTargetMode: params.milestoneTargetMode ?? 'currentWeek',
       enabledTestingTeams,
       enabledDevTeams,
       testingTeamConfigs: testingTeams,
@@ -380,9 +394,19 @@ export function ParamsPage() {
     [devTeams, enabledDevTeams, enabledTestingTeams, milestones, params, refProjects, testingTeams],
   )
 
-  const runForecast = React.useCallback(() => {
-    const firstMilestone = firstScheduledMilestone(milestones)
-    const startWeek = params.startWeek.trim()
+  const runForecast = React.useCallback((paramsOverride: Partial<ForecastProjectParams> = {}) => {
+    const latest = useForecastStore.getState()
+    const nextParams = { ...latest.params, ...paramsOverride }
+    const nextMilestones = latest.milestones
+    const nextForecastInput = {
+      ...forecastInput,
+      params: nextParams,
+      milestoneTargetMode: nextParams.milestoneTargetMode ?? 'currentWeek',
+      milestones: nextMilestones,
+      refProjects: latest.refProjects,
+    }
+    const firstMilestone = firstScheduledMilestone(nextMilestones)
+    const startWeek = nextParams.startWeek.trim()
     if (firstMilestone && startWeek && compareWeekAsc(firstMilestone.week, startWeek) !== 0) {
       const message = `项目开始时间是 ${startWeek}，但第一个有周期的节点 ${firstMilestone.name} 是 ${firstMilestone.week}。请先修改项目开始时间或节点周期，保持两者一致。`
       setForecastResult(null)
@@ -394,7 +418,7 @@ export function ParamsPage() {
     setIsForecasting(true)
     setForecastError('')
     void services.forecastService
-      .getForecastResult(forecastInput)
+      .getForecastResult(nextForecastInput)
       .then((result) => {
         setForecastResult(result)
         setOriginalDataset(result.dataset)
@@ -407,7 +431,7 @@ export function ParamsPage() {
         setForecastError(e instanceof Error ? e.message : '预测服务调用失败')
       })
       .finally(() => setIsForecasting(false))
-  }, [forecastInput, milestones, params.startWeek])
+  }, [forecastInput])
 
   React.useEffect(() => {
     if (!forecastResult || !shouldScrollToForecast) return
@@ -491,14 +515,16 @@ export function ParamsPage() {
 
   const saveForecastRecord = React.useCallback(() => {
     if (!enrichedForecastResult) return
+    const note = window.prompt('请输入本次预测版本备注（可选）', '') ?? ''
     void services.forecastService
       .saveForecastVersion({
         projectName: params.newProjectName,
         input: forecastInput,
         result: enrichedForecastResult,
+        note: note.trim(),
       })
       .then((saved) => {
-        toast('已保存预测版本', { description: `版本 ${saved.id.slice(0, 8)}` })
+        toast('已保存预测版本', { description: `${params.newProjectName} · ${saved.id.slice(0, 8)}` })
       })
       .catch((e: unknown) => {
         toast('保存失败', { description: e instanceof Error ? e.message : '服务调用失败' })
@@ -531,7 +557,7 @@ export function ParamsPage() {
                 type="button"
                 className="rounded-2xl px-6"
                 disabled={isForecasting}
-                onClick={runForecast}
+                onClick={() => runForecast()}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 {isForecasting ? '预测中...' : '开始预测'}
@@ -831,7 +857,9 @@ export function ParamsPage() {
                     </TableHeader>
                     <TableBody>
                       {milestones.map((m, idx) => (
-                        <TableRow key={m.name + m.week + String(idx)}>
+                        <TableRow
+                          key={[idx, m.name, m.week, m.date].join('|')}
+                        >
                           <TableCell>
                             <Input
                               defaultValue={m.name}
@@ -872,22 +900,25 @@ export function ParamsPage() {
                           </TableCell>
                           <TableCell>
                             <Input
-                              defaultValue={formatOptionalPercent(m.testSubmissionRate) === '—' ? '' : formatOptionalPercent(m.testSubmissionRate)}
+                              value={formatRateInput(m.testSubmissionRate)}
                               className="h-8 min-w-[84px] rounded-lg px-2"
+                              onChange={(e) => updateInlineMilestoneRate(idx, 'testSubmissionRate', e.target.value)}
                               onBlur={(e) => updateInlineMilestoneRate(idx, 'testSubmissionRate', e.target.value)}
                             />
                           </TableCell>
                           <TableCell>
                             <Input
-                              defaultValue={formatOptionalPercent(m.devResolutionRate) === '—' ? '' : formatOptionalPercent(m.devResolutionRate)}
+                              value={formatRateInput(m.devResolutionRate)}
                               className="h-8 min-w-[84px] rounded-lg px-2"
+                              onChange={(e) => updateInlineMilestoneRate(idx, 'devResolutionRate', e.target.value)}
                               onBlur={(e) => updateInlineMilestoneRate(idx, 'devResolutionRate', e.target.value)}
                             />
                           </TableCell>
                           <TableCell>
                             <Input
-                              defaultValue={formatOptionalPercent(m.testCompletionRate) === '—' ? '' : formatOptionalPercent(m.testCompletionRate)}
+                              value={formatRateInput(m.testCompletionRate)}
                               className="h-8 min-w-[84px] rounded-lg px-2"
+                              onChange={(e) => updateInlineMilestoneRate(idx, 'testCompletionRate', e.target.value)}
                               onBlur={(e) => updateInlineMilestoneRate(idx, 'testCompletionRate', e.target.value)}
                             />
                           </TableCell>
@@ -908,7 +939,7 @@ export function ParamsPage() {
                     </TableBody>
                   </Table>
                 </ScrollArea>
-                <div className="mt-4 flex flex-wrap gap-3">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <Button
                     type="button"
                     variant="outline"
@@ -917,6 +948,18 @@ export function ParamsPage() {
                   >
                     <Plus className="mr-2 h-4 w-4" />
                     新增节点
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-2xl"
+                    onClick={() => {
+                      if (!window.confirm('确认恢复系统预置节点吗？当前节点信息将被覆盖。')) return
+                      resetMilestonesToSystemPreset()
+                      toast('已恢复默认节点', { description: '节点信息已恢复为系统预置值' })
+                    }}
+                  >
+                    恢复默认
                   </Button>
                   <Button
                     type="button"
@@ -946,6 +989,25 @@ export function ParamsPage() {
                   >
                     导出节点
                   </Button>
+                  <div className="flex items-center gap-2">
+                    <Label className="whitespace-nowrap text-sm text-slate-600">节点达标口径</Label>
+                    <Select
+                      value={params.milestoneTargetMode ?? 'currentWeek'}
+                      onValueChange={(v) =>
+                        setParams({
+                          milestoneTargetMode: v === 'previousWeek' ? 'previousWeek' : 'currentWeek',
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-10 w-[150px] rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="currentWeek">节点当周</SelectItem>
+                        <SelectItem value="previousWeek">节点上一周</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -1046,6 +1108,7 @@ export function ParamsPage() {
                   <TableRow>
                     <TableHead>启用</TableHead>
                     <TableHead>聚合团队</TableHead>
+                    <TableHead className="w-[116px]">预估占比(%)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1060,6 +1123,14 @@ export function ParamsPage() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">{t.name}</TableCell>
+                      <TableCell>
+                        <Input
+                          value={formatRateInput(t.forecastRatio)}
+                          className="h-8 min-w-[96px] rounded-lg px-2"
+                          placeholder="自动"
+                          onChange={(e) => updateTeamForecastRatio(t.id, e.target.value)}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1079,6 +1150,7 @@ export function ParamsPage() {
                   <TableRow>
                     <TableHead>启用</TableHead>
                     <TableHead>聚合团队</TableHead>
+                    <TableHead className="w-[116px]">预估占比(%)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1093,6 +1165,14 @@ export function ParamsPage() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">{t.name}</TableCell>
+                      <TableCell>
+                        <Input
+                          value={formatRateInput(t.forecastRatio)}
+                          className="h-8 min-w-[96px] rounded-lg px-2"
+                          placeholder="自动"
+                          onChange={(e) => updateTeamForecastRatio(t.id, e.target.value)}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1229,7 +1309,10 @@ export function ParamsPage() {
                       toast('导入失败', { description: '文件中没有有效节点' })
                       return
                     }
-                    useForecastStore.getState().setMilestones(rows)
+                    setMilestones(rows)
+                    setForecastResult(null)
+                    setOriginalDataset(null)
+                    setForecastError('')
                     toast('已导入节点', { description: `共 ${rows.length} 条` })
                   }).catch((err: unknown) => {
                     toast('导入失败', { description: err instanceof Error ? err.message : '解析失败' })
@@ -1406,13 +1489,34 @@ export function ParamsPage() {
           )}
 
           <Card className="rounded-2xl">
-            <Tabs defaultValue="area" className="w-full">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <Tabs defaultValue="bar" className="w-full">
+              <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Created / Fixed / Backlog 预测趋势</CardTitle>
-                <TabsList className="rounded-2xl">
-                  <TabsTrigger value="area">面积图</TabsTrigger>
-                  <TabsTrigger value="bar">柱形图</TabsTrigger>
-                </TabsList>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm text-slate-600">
+                    <span>口径</span>
+                    <Select
+                      value={params.milestoneTargetMode ?? 'currentWeek'}
+                      onValueChange={(v) => {
+                        const milestoneTargetMode = v === 'previousWeek' ? 'previousWeek' : 'currentWeek'
+                        setParams({ milestoneTargetMode })
+                        runForecast({ milestoneTargetMode })
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-[150px] rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="currentWeek">节点当周</SelectItem>
+                        <SelectItem value="previousWeek">节点上一周</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <TabsList className="rounded-2xl">
+                    <TabsTrigger value="area">面积图</TabsTrigger>
+                    <TabsTrigger value="bar">柱形图</TabsTrigger>
+                  </TabsList>
+                </div>
               </CardHeader>
               <CardContent className="h-[340px]">
                 <TabsContent value="area" className="mt-0 h-full">
@@ -1590,6 +1694,7 @@ export function ParamsPage() {
                   <ExcelTemplatePreview
                     projectName={params.newProjectName}
                     dataset={forecastDataset}
+                    milestoneTargetMode={params.milestoneTargetMode ?? 'currentWeek'}
                     onCellChange={(team, weekIndex, newValue, type) => {
                       if (forecastResult) {
                         setForecastResult({

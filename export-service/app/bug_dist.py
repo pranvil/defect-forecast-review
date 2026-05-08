@@ -222,6 +222,23 @@ def _extract_reporter_name(issue: dict[str, Any]) -> str:
     return ""
 
 
+GOOGLE_XTS_TEAM = "Google XTS"
+PIPELINE_TEAM = "流水线"
+SWTC_DEVOPS_REPORTER = "swtc_devops"
+
+
+def _normalized_token(value: str) -> str:
+    return "".join(value.strip().lower().split())
+
+
+def _resolve_created_team_bucket(team_name: str, reporter_name: str, components: list[str]) -> str:
+    if _normalized_token(reporter_name) == SWTC_DEVOPS_REPORTER:
+        if any(_normalized_token(component) == "googlexts" for component in components):
+            return GOOGLE_XTS_TEAM
+        return PIPELINE_TEAM
+    return _resolve_team_bucket(team_name, reporter_name)
+
+
 def _is_unknown_team(team_name: str) -> bool:
     normalized = team_name.strip().lower()
     if not normalized:
@@ -254,7 +271,6 @@ def _build_counters_from_remote_issues(issues: list[dict[str, Any]], team_field_
     for issue in issues:
         raw_team = _extract_reporter_team(issue, team_field_path)
         reporter = _extract_reporter_name(issue)
-        team_counter[_resolve_team_bucket(raw_team, reporter)] += 1
         fields = issue.get("fields") if isinstance(issue, dict) else None
         components = fields.get("components") if isinstance(fields, dict) else None
         names: list[str] = []
@@ -266,6 +282,7 @@ def _build_counters_from_remote_issues(issues: list[dict[str, Any]], team_field_
                         names.append(name.strip())
         if not names:
             names = ["(None)"]
+        team_counter[_resolve_created_team_bucket(raw_team, reporter, names)] += 1
         for name in dict.fromkeys(names):
             module_counter[name] += 1
     return module_counter, team_counter, len(issues)
@@ -324,8 +341,8 @@ def _build_counters_from_local(project_key: str, *, start_date: str = "", end_da
             current_components = []
             return
         issue_count += 1
-        team_counter[_resolve_team_bucket(current_team, current_reporter)] += 1
         modules = current_components or ["(None)"]
+        team_counter[_resolve_created_team_bucket(current_team, current_reporter, modules)] += 1
         for name in dict.fromkeys(modules):
             module_counter[name] += 1
         current_key = ""

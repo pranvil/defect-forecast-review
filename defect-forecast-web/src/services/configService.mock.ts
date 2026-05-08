@@ -20,6 +20,7 @@ const DEFAULT_FORECAST_PARAMS: ForecastDefaultsPayload['params'] = {
   newProjectName: 'Aurora NP TMO',
   startWeek: '26W2',
   endWeek: '26W27',
+  milestoneTargetMode: 'currentWeek',
   projectCategory: 'NPI leading',
   region: 'US',
   os: 'Android',

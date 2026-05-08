@@ -29,7 +29,7 @@ export function Sidebar({ current, onNavigate }: SidebarProps) {
           <LayoutPanelLeft className="h-5 w-5" />
           Defect Forecast
         </div>
-        <div className="mt-1 text-xs text-slate-500">React 桌面风格 UI Demo</div>
+        <div className="mt-1 text-xs text-slate-500">React 桌面风格</div>
       </div>
       <div className="space-y-1 p-3">
         {items.map(({ key, label, Icon }) => (

@@ -87,6 +87,7 @@ export const forecastServiceMock: ForecastService = {
       baseWeekly,
       input.milestones,
       calculation?.estimatedDefects ?? baseWeekly.reduce((sum, row) => sum + row.created, 0),
+      { milestoneTargetMode: input.milestoneTargetMode ?? input.params.milestoneTargetMode },
     )
     const weekly = distribution.weekly
     const selectedHistoryNames = input.refProjects.map((row) => row.project)

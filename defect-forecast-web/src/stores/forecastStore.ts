@@ -13,6 +13,7 @@ export const defaultForecastParams: ForecastProjectParams = {
   newProjectName: 'Aurora NP TMO',
   startWeek: '26W2',
   endWeek: '26W27',
+  milestoneTargetMode: 'currentWeek',
   projectCategory: 'NPI leading',
   region: 'US',
   os: 'Android',
@@ -54,6 +55,7 @@ function normalizeForecastParams(params: Partial<ForecastProjectParams>): Foreca
     operators: Array.isArray(params.operators) ? params.operators : [],
     userPrograms: Array.isArray(params.userPrograms) ? params.userPrograms : [],
     supportSim: params.supportSim === 'No' ? 'No' : 'Yes',
+    milestoneTargetMode: params.milestoneTargetMode === 'previousWeek' ? 'previousWeek' : 'currentWeek',
     frQuantity: Number.isFinite(params.frQuantity) ? Number(params.frQuantity) : 0,
     mm: Number.isFinite(params.mm) ? Number(params.mm) : 0,
   }
@@ -87,6 +89,7 @@ type ForecastState = {
   updateRefProject: (row: RefProjectRow) => void
   milestones: MilestoneParam[]
   setMilestones: (milestones: MilestoneParam[]) => void
+  resetMilestonesToSystemPreset: () => void
   addMilestone: (row: MilestoneParam) => void
   updateMilestone: (index: number, row: MilestoneParam) => void
   removeMilestone: (index: number) => void
@@ -151,6 +154,10 @@ export const useForecastStore = create<ForecastState>((set, get) => ({
   milestones: normalizeMilestones(initialMilestones),
   setMilestones: (milestones) => {
     set({ milestones: normalizeMilestones(milestones) })
+    saveForecastDefaults(get)
+  },
+  resetMilestonesToSystemPreset: () => {
+    set({ milestones: normalizeMilestones(initialMilestones) })
     saveForecastDefaults(get)
   },
   addMilestone: (row) =>

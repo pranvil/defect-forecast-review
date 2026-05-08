@@ -26,6 +26,7 @@ export interface ForecastProjectParams {
   newProjectName: string
   startWeek: string
   endWeek: string
+  milestoneTargetMode?: 'currentWeek' | 'previousWeek'
   projectCategory: string
   region: string
   os: string

@@ -6,6 +6,8 @@ export interface TeamItem {
   type: TeamKind
   enabled: boolean
   note?: string
+  /** 预测拆分占比（%）；填写后优先于历史项目占比。 */
+  forecastRatio?: number | null
 }
 
 export function teamKindLabel(type: TeamKind): string {

@@ -37,6 +37,14 @@ const TESTING_OTHER_TEAM = '其他测试团队'
 const DEVELOPMENT_OTHER_TEAM = '其他开发团队'
 const JIRA_PROJECT_FETCH_FILTER_CLAUSE =
   'issuetype in (defect, defect_new) AND (summary !~ "MAIN2MP" AND summary !~ "MP2SMR" AND summary !~ "CloneMP")'
+const SPECIAL_GOOGLE_XTS_TEAM = 'Google XTS'
+const SPECIAL_PIPELINE_TEAM = '流水线'
+const SPECIAL_HERA_TEAM = 'Hera/Usersupport/APRUUT'
+const SPECIAL_GOOGLE_XTS_REPORTER = 'swtc_devops'
+const SPECIAL_GOOGLE_XTS_COMPONENTS = ['google XTs', 'Google XTS']
+const SPECIAL_PIPELINE_REPORTER_TEAM = '软件质量保障二中心-系统质量二部-质效自动化组'
+const SPECIAL_HERA_REPORTERS = ['usersupport', 'devops.tms']
+const SPECIAL_UNKNOWN_TESTING_REPORTERS = ['devops.tms', 'swtc_devops', 'usersupport']
 
 function isCompareAxisMode(value: unknown): value is CompareAxisMode {
   return value === 'calendar' || value === 'relative'
@@ -76,9 +84,9 @@ function splitTeamAliases(note: string): string[] {
     .filter(Boolean)
 }
 
-function buildTeamAliasMap(teams: TeamItem[]) {
+function buildTeamAliasMap(teams: TeamItem[], includeDisplayName = true) {
   return teams.map((team) => {
-    const aliases = [team.name, ...splitTeamAliases(team.note ?? '')]
+    const aliases = [...(includeDisplayName ? [team.name] : []), ...splitTeamAliases(team.note ?? '')]
     const normalizedAliases = new Set(aliases.map(normalizeTeamName).filter(Boolean))
     return { team: team.name, aliases, normalizedAliases }
   })
@@ -86,8 +94,10 @@ function buildTeamAliasMap(teams: TeamItem[]) {
 
 const TESTING_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedTestingTeams)
 const DEVELOPMENT_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedDevelopmentTeams)
-const TESTING_KNOWN_ALIASES = TESTING_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
-const DEVELOPMENT_KNOWN_ALIASES = DEVELOPMENT_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
+const TESTING_JQL_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedTestingTeams, false)
+const DEVELOPMENT_JQL_TEAM_ALIAS_MAP = buildTeamAliasMap(fixedDevelopmentTeams, false)
+const TESTING_KNOWN_ALIASES = TESTING_JQL_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
+const DEVELOPMENT_KNOWN_ALIASES = DEVELOPMENT_JQL_TEAM_ALIAS_MAP.flatMap((row) => row.aliases)
 
 function resolveTeamCategory(team: string, kind: 'testing' | 'development'): string {
   const normalized = normalizeTeamName(team)
@@ -158,7 +168,7 @@ export function useHistoryPageData() {
   const [relativeLength, setRelativeLength] = React.useState<CompareRelativeLength>('shortest')
   const [projectCompare, setProjectCompare] = React.useState<ProjectCompareResult | null>(null)
   const [versionId, setVersionId] = React.useState('')
-  const [forecastVersions, setForecastVersions] = React.useState<{ id: string; createdAt: string }[]>([])
+  const [forecastVersions, setForecastVersions] = React.useState<{ id: string; projectName: string; cycle: string; note: string; createdAt: string }[]>([])
   const [focusLineVisible, setFocusLineVisible] = React.useState({
     created: true,
     fixed: true,
@@ -168,6 +178,12 @@ export function useHistoryPageData() {
     historyCreated: true,
     jiraCreated: true,
     forecastCreated: true,
+    historyFixed: false,
+    jiraFixed: false,
+    forecastFixed: false,
+    backlogHistory: false,
+    backlogJira: false,
+    backlogForecast: false,
   })
   const [historyCompareLineVisible, setHistoryCompareLineVisible] = React.useState<Record<string, boolean>>({})
   const [favoriteProjects, setFavoriteProjects] = React.useState<string[]>(() => loadFavoriteProjectKeys())
@@ -285,9 +301,14 @@ export function useHistoryPageData() {
 
   React.useEffect(() => {
     let cancelled = false
-    void services.forecastService.listForecastVersions(focusProject).then((rows) => {
+    void services.forecastService.listForecastVersions().then((rows) => {
       if (cancelled) return
-      setForecastVersions(rows.map((x) => ({ id: x.id, createdAt: x.createdAt })))
+      setForecastVersions(rows.map((x) => ({ id: x.id, projectName: x.projectName, cycle: x.cycle, note: x.note, createdAt: x.createdAt })))
+      setVersionId((current) => {
+        if (current && rows.some((row) => row.id === current)) return current
+        const byCurrentProject = rows.find((row) => row.projectName.toUpperCase() === focusProject.toUpperCase())
+        return (byCurrentProject ?? rows[0])?.id ?? ''
+      })
     })
     return () => {
       cancelled = true
@@ -634,14 +655,42 @@ export function useHistoryPageData() {
     [focusProject, projects.length, refreshProjects, selectedProjects, setFocusProject, setSelectedProjects],
   )
 
+  // URL 长度阈值：超出后通过后端 create-filter 绕过 414
+  const JIRA_URL_MAX_LENGTH = 2000
+
   const openJiraByJql = React.useCallback(
     (jql: string) => {
       const normalized = jql.trim()
       if (!normalized) return
       const url = `${jiraBaseUrl}/issues/?jql=${encodeURIComponent(normalized)}`
-      window.open(url, '_blank', 'noopener,noreferrer')
+      if (url.length <= JIRA_URL_MAX_LENGTH) {
+        window.open(url, '_blank', 'noopener,noreferrer')
+        return
+      }
+      // JQL URL 超长，通过后端创建 Jira saved filter 绕过 414
+      void services.jiraService
+        .createFilter({
+          jql: normalized,
+          filterName: `DRP-temp-${Date.now()}`,
+          baseUrl: jiraConnection.baseUrl,
+          authType: jiraConnection.authType,
+          username: jiraConnection.username,
+          token: jiraConnection.token,
+          verifySsl: jiraConnection.verifySsl,
+          timeoutSec: jiraConnection.timeoutSec,
+        })
+        .then(({ filterUrl }) => {
+          if (filterUrl) {
+            window.open(filterUrl, '_blank', 'noopener,noreferrer')
+          } else {
+            toast('无法打开 Jira', { description: '创建 Filter 失败，请检查 Jira 连接配置' })
+          }
+        })
+        .catch((e: unknown) => {
+          toast('无法打开 Jira', { description: e instanceof Error ? e.message : '创建 Filter 时发生错误' })
+        })
     },
-    [jiraBaseUrl],
+    [jiraBaseUrl, jiraConnection],
   )
 
   const escapeJqlValue = React.useCallback((value: string) => value.replaceAll('\\', '\\\\').replaceAll('"', '\\"'), [])
@@ -656,18 +705,45 @@ export function useHistoryPageData() {
       const isOther = isTesting ? team === TESTING_OTHER_TEAM : team === DEVELOPMENT_OTHER_TEAM
       if (isOther) {
         const knownAliases = isTesting ? TESTING_KNOWN_ALIASES : DEVELOPMENT_KNOWN_ALIASES
-        const excludeList = knownAliases.map(a => `"${escapeJqlValue(a)}"`).join(', ')
+        const knownRealAliases = isTesting
+          ? knownAliases.filter((alias) => !SPECIAL_UNKNOWN_TESTING_REPORTERS.some((reporter) => normalizeTeamName(alias) === normalizeTeamName(`测试未知团队-${reporter}`)))
+          : knownAliases
+        const excludeList = knownRealAliases.map(a => `"${escapeJqlValue(a)}"`).join(', ')
         if (!excludeList) return `(${field} is EMPTY OR ${field} is not EMPTY)`
-        return `(${field} not in (${excludeList}) OR ${field} is EMPTY)`
+        const reporterList = SPECIAL_UNKNOWN_TESTING_REPORTERS.map((reporter) => `"${escapeJqlValue(reporter)}"`).join(', ')
+        const reporterClause = isTesting ? ` AND reporter not in (${reporterList})` : ''
+        return `(${field} not in (${excludeList}) OR ${field} is EMPTY)${reporterClause}`
       }
 
-      const aliasMap = isTesting ? TESTING_TEAM_ALIAS_MAP : DEVELOPMENT_TEAM_ALIAS_MAP
+      const aliasMap = isTesting ? TESTING_JQL_TEAM_ALIAS_MAP : DEVELOPMENT_JQL_TEAM_ALIAS_MAP
       const matchedCategory = aliasMap.find((row) => row.team === team)
 
       if (matchedCategory) {
-        const includeList = matchedCategory.aliases.map((a) => `"${escapeJqlValue(a)}"`).join(', ')
+        const componentList = SPECIAL_GOOGLE_XTS_COMPONENTS.map((component) => `"${escapeJqlValue(component)}"`).join(', ')
+        const aliases = matchedCategory.aliases.filter((alias) => {
+          const normalizedAlias = normalizeTeamName(alias)
+          if (isTesting && team === SPECIAL_PIPELINE_TEAM) {
+            return normalizedAlias === normalizeTeamName(SPECIAL_PIPELINE_REPORTER_TEAM)
+          }
+          if (isTesting && team === SPECIAL_HERA_TEAM) {
+            return !SPECIAL_HERA_REPORTERS.some((reporter) => normalizedAlias === normalizeTeamName(`测试未知团队-${reporter}`))
+          }
+          return true
+        })
+        const includeList = aliases.map((a) => `"${escapeJqlValue(a)}"`).join(', ')
         if (!includeList) return `${field} is EMPTY AND ${field} is not EMPTY`
-        return `${field} in (${includeList})`
+        const clauses = [`${field} in (${includeList})`]
+        if (isTesting && team === SPECIAL_GOOGLE_XTS_TEAM) {
+          clauses.push(`(reporter = "${escapeJqlValue(SPECIAL_GOOGLE_XTS_REPORTER)}" AND component in (${componentList}))`)
+        }
+        if (isTesting && team === SPECIAL_PIPELINE_TEAM) {
+          clauses.push(`(reporter = "${escapeJqlValue(SPECIAL_GOOGLE_XTS_REPORTER)}" AND (component not in (${componentList}) OR component is EMPTY))`)
+        }
+        if (isTesting && team === SPECIAL_HERA_TEAM) {
+          const reporterList = SPECIAL_HERA_REPORTERS.map((reporter) => `"${escapeJqlValue(reporter)}"`).join(', ')
+          clauses.push(`reporter in (${reporterList})`)
+        }
+        return clauses.length === 1 ? clauses[0] : `(${clauses.join(' OR ')})`
       }
 
       const unknown = isTesting ? '测试未知团队' : '软件-未知团队'
@@ -854,10 +930,10 @@ export function useHistoryPageData() {
 
   const openImportView = React.useCallback(() => setProjectHubView('import'), [setProjectHubView])
   const openLibraryView = React.useCallback(() => setProjectHubView('library'), [setProjectHubView])
-  const refreshCurrentProjectData = React.useCallback(async () => {
-    const keyForRequest = focusProject.trim().toUpperCase()
+  const refreshProjectDataByKey = React.useCallback(async (projectKey: string) => {
+    const keyForRequest = projectKey.trim().toUpperCase()
     if (!keyForRequest) {
-      toast('更新失败', { description: '当前未选择项目' })
+      toast('更新失败', { description: '请输入项目 Key' })
       return
     }
     setIsRefreshingProjectData(true)
@@ -877,13 +953,17 @@ export function useHistoryPageData() {
         {
           ...focusProjectSummary,
           name: keyForRequest,
-          displayName: focusProjectSummary?.displayName,
+          displayName: keyForRequest === focusProject.trim().toUpperCase() ? focusProjectSummary?.displayName : undefined,
           cycle: res.cycleLabel.replace(' - ', '-'),
           defects: res.fetchedCount,
           teams: Math.max(1, Math.round(res.fetchedCount / 200)),
         },
       ])
       await refreshProjects()
+      setFocusProject(keyForRequest)
+      if (!selectedProjects.includes(keyForRequest)) {
+        setSelectedProjects(selectedProjects.length ? [...selectedProjects, keyForRequest] : [keyForRequest])
+      }
       setHistoryReloadToken((x) => x + 1)
       toast('数据更新成功', {
         description: `已更新 ${keyForRequest}，共 ${res.fetchedCount} 条 Defect`,
@@ -895,7 +975,11 @@ export function useHistoryPageData() {
     } finally {
       setIsRefreshingProjectData(false)
     }
-  }, [focusProject, focusProjectSummary?.displayName, jiraConnection, refreshProjects])
+  }, [focusProject, focusProjectSummary, jiraConnection, refreshProjects, selectedProjects, setFocusProject, setSelectedProjects])
+
+  const refreshCurrentProjectData = React.useCallback(async () => {
+    await refreshProjectDataByKey(focusProject)
+  }, [focusProject, refreshProjectDataByKey])
 
   return {
     addCachedProject,
@@ -974,6 +1058,7 @@ export function useHistoryPageData() {
     toggleSelectedProject,
     topTeamDistribution,
     refreshCurrentProjectData,
+    refreshProjectDataByKey,
     versionId,
     visibleProjects,
     weeklyWithDate,

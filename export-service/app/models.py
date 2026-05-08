@@ -141,10 +141,28 @@ class JiraConnectionTestResult(BaseModel):
     account: str = ""
 
 
+class JiraCreateFilterRequest(BaseModel):
+    jql: str = Field(min_length=1)
+    filterName: str = ""
+    baseUrl: str = Field(min_length=1)
+    authType: Literal["pat", "basic"] = "pat"
+    username: str = ""
+    token: str = Field(min_length=1)
+    verifySsl: bool = True
+    timeoutSec: int = Field(default=10, ge=3, le=60)
+
+
+class JiraCreateFilterResult(BaseModel):
+    filterId: str
+    filterUrl: str
+
+
 class ForecastParams(BaseModel):
+
     newProjectName: str
     startWeek: str
     endWeek: str
+    milestoneTargetMode: Literal["currentWeek", "previousWeek"] = "currentWeek"
     projectCategory: str = ""
     region: str = ""
     os: str = ""
@@ -182,10 +200,12 @@ class ForecastTeamConfig(BaseModel):
     type: Literal["testing", "development"]
     enabled: bool = True
     note: str = ""
+    forecastRatio: Optional[float] = None
 
 
 class ForecastInput(BaseModel):
     params: ForecastParams
+    milestoneTargetMode: Optional[Literal["currentWeek", "previousWeek"]] = None
     enabledTestingTeams: List[str] = Field(default_factory=list)
     enabledDevTeams: List[str] = Field(default_factory=list)
     testingTeamConfigs: List[ForecastTeamConfig] = Field(default_factory=list)
@@ -215,6 +235,7 @@ class ForecastFactors(BaseModel):
     supportSim: float
     mm: float
     pipeline: float
+    frQuantity: float = 1.0
 
 
 class ForecastWarning(BaseModel):
@@ -300,6 +321,7 @@ class TeamConfigRow(BaseModel):
     type: Literal["testing", "development"]
     enabled: bool = True
     note: str = ""
+    forecastRatio: Optional[float] = None
 
 
 class FieldMappingRow(BaseModel):

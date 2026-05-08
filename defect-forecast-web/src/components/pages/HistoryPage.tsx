@@ -1,6 +1,7 @@
 import {
   Columns3,
   FolderKanban,
+  Pencil,
   Star,
   Trash2,
 } from 'lucide-react'
@@ -63,7 +64,6 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     focusProjectSummary,
     focusWeekDateMap,
     focusWeekLabels,
-    forecastVersions,
     formatProjectLabel,
     hasAnyProject,
     historyCompareLineVisible,
@@ -75,10 +75,6 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     openLibraryView,
     openProjectDetailView,
     paginatedProjects,
-    projectCompare,
-    projectCompareLineVisible,
-    projectCompareWeekDateMap,
-    projectCompareWithDate,
     projectCount,
     projectFilter,
     projectFilterMode,
@@ -97,27 +93,28 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
     setDetailTab,
     setFocusLineVisible,
     setHistoryCompareLineVisible,
-    setProjectCompareLineVisible,
     setProjectFilter,
     setProjectFilterMode,
     setProjectListMode,
     setProjectPage,
     setRelativeLength,
-    setVersionId,
     testingTeamWeeklyRows,
     toggleFavorite,
     toggleSelectedProject,
     topTeamDistribution,
     refreshCurrentProjectData,
-    versionId,
     visibleProjects,
     weeklyWithDate,
     effectiveAnalysisStartDate,
     effectiveAnalysisEndDate,
   } = useHistoryPageData()
-  const [projectMetadataAction, setProjectMetadataAction] = React.useState<'add' | 'import' | 'export' | null>(null)
+  const [projectMetadataAction, setProjectMetadataAction] = React.useState<'add' | 'edit' | 'import' | 'export' | null>(null)
+  const [editingProjectKey, setEditingProjectKey] = React.useState('')
   const [overwriteExistingOnImport, setOverwriteExistingOnImport] = React.useState(false)
-  const handleProjectMetadataActionHandled = React.useCallback(() => setProjectMetadataAction(null), [])
+  const handleProjectMetadataActionHandled = React.useCallback(() => {
+    setProjectMetadataAction(null)
+    setEditingProjectKey('')
+  }, [])
   const handleProjectMetadataRowsChanged = React.useCallback(() => {
     void refreshProjects()
   }, [refreshProjects])
@@ -142,6 +139,7 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
       <HistoricalProjectMetadataCard
         variant="controller"
         action={projectMetadataAction}
+        editProjectKey={editingProjectKey}
         overwriteExistingOnImport={overwriteExistingOnImport}
         onOverwriteExistingOnImportChange={setOverwriteExistingOnImport}
         onActionHandled={handleProjectMetadataActionHandled}
@@ -261,6 +259,18 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
                                   variant="outline"
                                   size="sm"
                                   className="h-8 rounded-lg"
+                                  onClick={() => {
+                                    setEditingProjectKey(p.name)
+                                    setProjectMetadataAction('edit')
+                                  }}
+                                  title="编辑项目元数据"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 rounded-lg"
                                   onClick={() => toggleFavorite(p.name)}
                                   title={isFavorite ? '取消收藏' : '收藏项目'}
                                 >
@@ -321,6 +331,16 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
                               onClick={() => toggleSelectedProject(p.name)}
                             >
                               {isSelected ? '已选中' : '加入对比'}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="h-8 rounded-xl bg-white text-slate-900"
+                              onClick={() => {
+                                setEditingProjectKey(p.name)
+                                setProjectMetadataAction('edit')
+                              }}
+                            >
+                              编辑
                             </Button>
                             <Button
                               variant="outline"
@@ -429,15 +449,6 @@ export function HistoryPage({ mode = 'full' }: HistoryPageProps) {
               />
               <ProjectModuleTab focusProject={focusProject} />
               <ProjectCompareTab
-                focusProjectLabel={focusProjectLabel}
-                versionId={versionId}
-                setVersionId={setVersionId}
-                forecastVersions={forecastVersions}
-                projectCompare={projectCompare}
-                projectCompareLineVisible={projectCompareLineVisible}
-                setProjectCompareLineVisible={setProjectCompareLineVisible}
-                projectCompareWithDate={projectCompareWithDate}
-                projectCompareWeekDateMap={projectCompareWeekDateMap}
                 compareAxisMode={compareAxisMode}
                 setCompareAxisMode={setCompareAxisMode}
                 calendarWindow={calendarWindow}

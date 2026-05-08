@@ -2,9 +2,11 @@ import { compareColors } from '@/data/mock/compareColors'
 import { weekLabels } from '@/data/mock/calendar'
 import { getProjectHistory, projectLibrary, projectNames } from '@/data/mock/projects'
 import { delay } from '@/services/delay'
+import type { ForecastResult } from '@/services/forecastService'
 import type { CompareBuildOptions, ProjectService, ProjectSummary } from '@/services/projectService'
 
 const CACHE_KEY = 'defectForecast.cachedProjects.v1'
+const FORECAST_VERSION_CACHE_KEY = 'defectForecast.forecastVersions.v1'
 
 function loadCache(): ProjectSummary[] | null {
   try {
@@ -77,6 +79,34 @@ function sortWeekLabels(labels: string[]): string[] {
     if (aw !== bw) return aw - bw
     return a.localeCompare(b)
   })
+}
+
+function loadForecastVersions(): Array<{
+  id: string
+  projectName: string
+  createdAt: string
+  result?: ForecastResult
+}> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FORECAST_VERSION_CACHE_KEY) || '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((x) => x as Partial<{ id: string; projectName: string; createdAt: string; result: ForecastResult }>)
+      .filter((x): x is { id: string; projectName: string; createdAt: string; result?: ForecastResult } =>
+        typeof x.id === 'string' && typeof x.projectName === 'string' && typeof x.createdAt === 'string',
+      )
+  } catch {
+    return []
+  }
+}
+
+function findForecastResult(projectName: string, forecastVersionId?: string): { id?: string; result?: ForecastResult } {
+  const rows = loadForecastVersions()
+  const normalizedProjectName = projectName.trim().toLowerCase()
+  const matched = forecastVersionId
+    ? rows.find((row) => row.id === forecastVersionId)
+    : rows.find((row) => row.projectName.trim().toLowerCase() === normalizedProjectName)
+  return { id: matched?.id, result: matched?.result }
 }
 
 let cachedProjects: ProjectSummary[] =
@@ -184,26 +214,31 @@ export const projectServiceMock: ProjectService = {
     cachedProjects = cachedProjects.filter((x) => x.name !== projectName)
     persistCache(cachedProjects)
   },
-  async getProjectCompare(projectName) {
+  async getProjectCompare(projectName, forecastVersionId) {
     await delay(80)
     const history = getProjectHistory(projectName)
+    const forecast = findForecastResult(projectName, forecastVersionId)
+    const forecastByWeek = new Map(
+      (forecast.result?.dataset.weekly ?? []).map((row) => [row.weekLabel, row]),
+    )
     const weekly = history.weekly.map((w) => ({
       weekLabel: w.weekLabel,
       historyCreated: w.created,
       historyFixed: w.fixed,
       jiraCreated: Math.max(0, w.created - 3),
       jiraFixed: Math.max(0, w.fixed - 2),
-      forecastCreated: Math.max(0, w.created + 4),
-      forecastFixed: Math.max(0, w.fixed + 1),
+      forecastCreated: forecastByWeek.get(w.weekLabel)?.created ?? 0,
+      forecastFixed: forecastByWeek.get(w.weekLabel)?.fixed ?? 0,
       backlogHistory: w.backlog,
       backlogJira: Math.max(0, w.backlog - 8),
-      backlogForecast: w.backlog + 12,
+      backlogForecast: forecastByWeek.get(w.weekLabel)?.backlog ?? 0,
     }))
     const totalHistoryCreated = weekly.reduce((s, r) => s + r.historyCreated, 0)
     const totalJiraCreated = weekly.reduce((s, r) => s + r.jiraCreated, 0)
     const totalForecastCreated = weekly.reduce((s, r) => s + r.forecastCreated, 0)
     return {
       projectName,
+      forecastVersionId: forecastVersionId ?? forecast.id,
       metrics: {
         totalHistoryCreated,
         totalJiraCreated,
