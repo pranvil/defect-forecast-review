@@ -449,7 +449,7 @@ export function BugBoardPage({
     [projectSummaries],
   )
 
-  const ensureJiraConfigOk = () => {
+  const ensureJiraConfigOk = React.useCallback(() => {
     if (!jiraConnection.baseUrl.trim()) {
       toast('获取失败', { description: '请先在“系统配置”填写 Jira Base URL' })
       setActiveSection('config')
@@ -466,7 +466,7 @@ export function BugBoardPage({
       return false
     }
     return true
-  }
+  }, [jiraConnection.authType, jiraConnection.baseUrl, jiraConnection.token, jiraConnection.username, setActiveSection])
 
   const runTaskAndWait = React.useCallback(
     async (primary: string, compare: string, force: boolean) => {
@@ -679,6 +679,7 @@ export function BugBoardPage({
     normalizedRangeEnd,
     normalizedRangeStart,
     runTaskAndWait,
+    ensureJiraConfigOk,
     viewPrimaryProjectKey,
   ])
 

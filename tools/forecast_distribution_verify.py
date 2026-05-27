@@ -252,6 +252,7 @@ def distribute_increasing_by_constraints(
     length: int,
     constraints: List[dict],
     max_cum_by_index: Optional[List[int]] = None,
+    weights: Optional[List[float]] = None,
 ) -> List[int]:
     values = [0 for _ in range(length)]
     prev_index = -1
@@ -279,11 +280,19 @@ def distribute_increasing_by_constraints(
             prev_index = end
             prev_cum = target_cum
             continue
-        base = amount // span_length
-        remainder = amount - base * span_length
-        for i in range(span_length):
-            idx = prev_index + 1 + i
-            values[idx] = base + (1 if i >= span_length - remainder else 0)
+        span = list(range(prev_index + 1, end + 1))
+        span_weights = [max(0.0, float(weights[idx])) for idx in span] if weights else []
+        total_weight = sum(span_weights)
+        if weights and total_weight > 0:
+            rounded = round_to_total([amount * w / total_weight for w in span_weights], amount)
+            for idx, value in zip(span, rounded):
+                values[idx] = value
+        else:
+            base = amount // span_length
+            remainder = amount - base * span_length
+            for i in range(span_length):
+                idx = prev_index + 1 + i
+                values[idx] = base + (1 if i >= span_length - remainder else 0)
         prev_index = end
         prev_cum = target_cum
 
@@ -617,7 +626,13 @@ def build_distribution(
             reserve_pressure = 1.0 + max(0, int(reserve[tail_start]) - int(reserve[i])) / max(1, int(total))
             fixed_weights[i] *= reserve_pressure
     # devResolutionRate 优先：reserve 只影响权重倾向，不再作为 fixed 累计硬上限。
-    fixed_raw = distribute_increasing_by_constraints(fixed_total, len(base_weekly), fixed_constraints_by_created, created_cum)
+    fixed_raw = distribute_increasing_by_constraints(
+        fixed_total,
+        len(base_weekly),
+        fixed_constraints_by_created,
+        created_cum,
+        fixed_weights,
+    )
     fixed = smooth_tail_fixed_spikes(
         enforce_tail_backlog_non_increasing(
             front_load_fixed(

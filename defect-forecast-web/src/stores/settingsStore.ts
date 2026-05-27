@@ -53,7 +53,9 @@ function loadFieldMappings(): FieldMapping[] | null {
 
 function persistJiraConnection(jiraConnection: JiraConnectionConfig) {
   try {
-    localStorage.setItem(JIRA_CONN_KEY, JSON.stringify(jiraConnection))
+    const safeConnection: Partial<JiraConnectionConfig> = { ...jiraConnection }
+    delete safeConnection.token
+    localStorage.setItem(JIRA_CONN_KEY, JSON.stringify(safeConnection))
   } catch {
     // ignore
   }
@@ -67,17 +69,21 @@ function loadJiraConnection(): JiraConnectionConfig | null {
     if (!parsed || typeof parsed !== 'object') return null
     if (typeof parsed.baseUrl !== 'string') return null
     if (parsed.authType !== 'pat' && parsed.authType !== 'basic') return null
-    return {
+    const connection = {
       baseUrl: parsed.baseUrl,
       authType: parsed.authType,
       username: typeof parsed.username === 'string' ? parsed.username : '',
-      token: typeof parsed.token === 'string' ? parsed.token : '',
+      token: '',
       verifySsl: parsed.verifySsl !== false,
       timeoutSec:
         typeof parsed.timeoutSec === 'number' && Number.isFinite(parsed.timeoutSec)
           ? Math.max(3, Math.min(60, Math.round(parsed.timeoutSec)))
           : 10,
     }
+    if (typeof parsed.token === 'string' && parsed.token) {
+      persistJiraConnection(connection)
+    }
+    return connection
   } catch {
     return null
   }

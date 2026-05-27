@@ -1742,6 +1742,7 @@ def _distribute_increasing_by_constraints(
     constraints: list[dict[str, object]],
     max_cum_by_index: list[float] | None = None,
     warnings: list[ForecastWarning] | None = None,
+    weights: list[float] | None = None,
 ) -> list[int]:
     values = [0 for _ in range(length)]
     prev_index = -1
@@ -1779,11 +1780,19 @@ def _distribute_increasing_by_constraints(
             prev_index = end
             prev_cum = target_cum
             continue
-        base = amount // span_length
-        remainder = amount - base * span_length
-        for i in range(span_length):
-            idx = prev_index + 1 + i
-            values[idx] = base + (1 if i >= span_length - remainder else 0)
+        span = list(range(prev_index + 1, end + 1))
+        span_weights = [max(0.0, float(weights[idx])) for idx in span] if weights else []
+        total_weight = sum(span_weights)
+        if weights and total_weight > 0:
+            rounded = _round_to_total([amount * w / total_weight for w in span_weights], amount)
+            for idx, value in zip(span, rounded):
+                values[idx] = value
+        else:
+            base = amount // span_length
+            remainder = amount - base * span_length
+            for i in range(span_length):
+                idx = prev_index + 1 + i
+                values[idx] = base + (1 if i >= span_length - remainder else 0)
         prev_index = end
         prev_cum = target_cum
     return values
@@ -2136,7 +2145,14 @@ def _build_forecast_weekly_distribution(
             fixed_weights[i] *= reserve_pressure
     cap_warnings: list[ForecastWarning] = []
     fixed_avail = _enforce_fixed_availability(
-        _distribute_increasing_by_constraints(fixed_total, len(base_weekly), fixed_constraints_by_created, created_cum, cap_warnings),
+        _distribute_increasing_by_constraints(
+            fixed_total,
+            len(base_weekly),
+            fixed_constraints_by_created,
+            created_cum,
+            cap_warnings,
+            fixed_weights,
+        ),
         created,
     )
     tail_reserve = _tail_reserve_from_actual_backlog(created, fixed_avail, tail_start_index, final_backlog)
@@ -2207,8 +2223,13 @@ def _split_weekly_by_ratios(
     weekly_values: list[int],
     ratios: list[float],
     group: str,
-) -> list[dict[str, object]]:
+    ) -> list[dict[str, object]]:
     rows = [{"team": team, "group": group, "values": []} for team in teams]
+    if sum(ratios) <= 0:
+        for _ in weekly_values:
+            for row in rows:
+                row["values"].append(0)  # type: ignore[union-attr]
+        return rows
     for total in weekly_values:
         values = _round_to_total([total * ratio for ratio in ratios], total)
         for row, value in zip(rows, values):
@@ -2231,7 +2252,7 @@ def _allocate_teams_from_history(
         if has_user_programs or team.strip() != USER_PROGRAM_TEST_TEAM
     ]
 
-    def ratios_for(teams: list[str], field: str, team_configs: list[object], label: str) -> list[float]:
+    def ratios_for(teams: list[str], field: str, team_configs: list[object]) -> list[float]:
         if not teams:
             return []
         totals = _team_totals(histories, field, team_configs)
@@ -2250,10 +2271,6 @@ def _allocate_teams_from_history(
             return min(100.0, value)
 
         manual_ratios = {team: ratio for team in teams if (ratio := manual_ratio(team)) is not None}
-        missing_teams = [team for team in teams if totals.get(team, 0) == 0 and team not in manual_ratios]
-        if missing_teams:
-            names = ", ".join(missing_teams)
-            raise ValueError(f"勾选的{label} '{names}' 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。")
         manual_sum = sum(manual_ratios.values())
         if manual_sum > 0:
             remaining_teams = [team for team in teams if team not in manual_ratios]
@@ -2271,10 +2288,12 @@ def _allocate_teams_from_history(
             if weight_total > 0:
                 return [weight / weight_total for weight in weights]
         selected_total = sum(totals.get(team, 0) for team in teams)
+        if selected_total <= 0:
+            return [0.0 for _ in teams]
         return [totals.get(team, 0) / selected_total for team in teams]
 
-    created_ratios = ratios_for(effective_testing_teams, "createdTeams", testing_team_configs, "测试团队")
-    fixed_ratios = ratios_for(dev_teams, "fixedTeams", dev_team_configs, "开发团队")
+    created_ratios = ratios_for(effective_testing_teams, "createdTeams", testing_team_configs)
+    fixed_ratios = ratios_for(dev_teams, "fixedTeams", dev_team_configs)
     return (
         _split_weekly_by_ratios(effective_testing_teams, [row.created for row in weekly], created_ratios, "测试团队"),
         _split_weekly_by_ratios(dev_teams, [row.fixed for row in weekly], fixed_ratios, "开发团队"),
@@ -2367,6 +2386,12 @@ def get_project_history(project_name: str) -> ProjectHistory:
 
 def generate_forecast(input_data: ForecastInput) -> ForecastResult:
     estimated_defects, base_value, reference_projects, factors = _predict_defect_total(input_data)
+    milestone_weeks = [milestone.week.strip() for milestone in input_data.milestones if milestone.week.strip()]
+    effective_start_week = (
+        sorted(milestone_weeks, key=_parse_week_label)[0]
+        if milestone_weeks
+        else input_data.params.startWeek
+    )
     effective_end_week = input_data.params.endWeek
     for milestone in input_data.milestones:
         week = milestone.week.strip()
@@ -2375,13 +2400,13 @@ def generate_forecast(input_data: ForecastInput) -> ForecastResult:
 
     seed_parts = [
         input_data.params.newProjectName,
-        input_data.params.startWeek,
+        effective_start_week,
         effective_end_week,
         str(estimated_defects),
     ]
     seed = "|".join(seed_parts)
     weekly, warnings = _build_forecast_weekly_distribution(
-        _make_weekly(seed, input_data.params.startWeek, effective_end_week),
+        _make_weekly(seed, effective_start_week, effective_end_week),
         input_data.milestones,
         estimated_defects,
         input_data.milestoneTargetMode or input_data.params.milestoneTargetMode,
@@ -2948,19 +2973,44 @@ def _save_app_config(key: str, payload: object) -> None:
 
 
 def list_teams() -> list[TeamConfigRow]:
-    return [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, name, team_type, enabled, note, forecast_ratio
+            FROM team_config
+            ORDER BY CASE team_type WHEN 'testing' THEN 0 ELSE 1 END, rowid
+            """
+        ).fetchall()
+    if not rows:
+        return [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
+    out: list[TeamConfigRow] = []
+    for row in rows:
+        team_type = str(row["team_type"])
+        if team_type not in {"testing", "development"}:
+            continue
+        out.append(
+            TeamConfigRow(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                type=team_type,  # type: ignore[arg-type]
+                enabled=bool(row["enabled"]),
+                note=str(row["note"] or ""),
+                forecastRatio=row["forecast_ratio"],
+            )
+        )
+    return out or [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
 
 
 def save_teams(rows: list[TeamConfigRow]) -> list[TeamConfigRow]:
-    rows_to_save = [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
+    rows_to_save = rows or [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
     with get_conn() as conn:
         conn.execute("DELETE FROM team_config")
         now = datetime.utcnow().isoformat()
         for row in rows_to_save:
             conn.execute(
                 """
-                INSERT INTO team_config(id, name, team_type, enabled, note, updated_at)
-                VALUES(?,?,?,?,?,?)
+                INSERT INTO team_config(id, name, team_type, enabled, note, forecast_ratio, updated_at)
+                VALUES(?,?,?,?,?,?,?)
                 """,
                 (
                     row.id,
@@ -2968,6 +3018,7 @@ def save_teams(rows: list[TeamConfigRow]) -> list[TeamConfigRow]:
                     row.type,
                     1 if row.enabled else 0,
                     row.note,
+                    row.forecastRatio,
                     now,
                 ),
             )

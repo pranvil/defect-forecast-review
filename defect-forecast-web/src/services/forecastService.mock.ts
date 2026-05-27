@@ -17,6 +17,14 @@ function effectiveEndWeek(paramEndWeek: string, milestones: { week: string }[]):
     .reduce((endWeek, week) => (compareWeekAsc(week, endWeek) > 0 ? week : endWeek), paramEndWeek)
 }
 
+function effectiveStartWeek(paramStartWeek: string, milestones: { week: string }[]): string {
+  const firstMilestoneWeek = milestones
+    .map((m) => m.week.trim())
+    .filter(Boolean)
+    .sort(compareWeekAsc)[0]
+  return firstMilestoneWeek || paramStartWeek
+}
+
 export const forecastServiceMock: ForecastService = {
   async getForecastResult(input): Promise<ForecastResult> {
     await delay(180)
@@ -29,10 +37,11 @@ export const forecastServiceMock: ForecastService = {
         : historyProjects,
     )
 
+    const startWeek = effectiveStartWeek(input.params.startWeek, input.milestones)
     const endWeek = effectiveEndWeek(input.params.endWeek, input.milestones)
-    const startParsed = parseYearWeek(input.params.startWeek)
+    const startParsed = parseYearWeek(startWeek)
     const endParsed = parseYearWeek(endWeek)
-    const startInMock = weekIndex(input.params.startWeek)
+    const startInMock = weekIndex(startWeek)
     const endInMock = weekIndex(endWeek)
 
     const startWeekNum = startParsed?.week ?? (startInMock >= 0 ? startInMock + 2 : 2)

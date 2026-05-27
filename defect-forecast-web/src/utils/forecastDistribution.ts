@@ -159,6 +159,7 @@ function distributeIncreasingByConstraints(
   constraints: Constraint[],
   maxCumByIndex?: number[],
   warnings?: ForecastWarning[],
+  weights?: number[],
 ): number[] {
   const values = Array.from({ length }, () => 0)
   let prevIndex = -1
@@ -196,11 +197,21 @@ function distributeIncreasingByConstraints(
       prevCum = targetCum
       continue
     }
-    const base = Math.floor(amount / spanLength)
-    const remainder = amount - base * spanLength
-    for (let i = 0; i < spanLength; i += 1) {
-      const idx = prevIndex + 1 + i
-      values[idx] = base + (i >= spanLength - remainder ? 1 : 0)
+    const span = Array.from({ length: spanLength }, (_, i) => prevIndex + 1 + i)
+    const spanWeights = weights ? span.map((idx) => Math.max(0, weights[idx] ?? 0)) : []
+    const totalWeight = spanWeights.reduce((sum, value) => sum + value, 0)
+    if (weights && totalWeight > 0) {
+      const rounded = roundToTotal(spanWeights.map((weight) => (amount * weight) / totalWeight), amount)
+      span.forEach((idx, i) => {
+        values[idx] = rounded[i] ?? 0
+      })
+    } else {
+      const base = Math.floor(amount / spanLength)
+      const remainder = amount - base * spanLength
+      for (let i = 0; i < spanLength; i += 1) {
+        const idx = prevIndex + 1 + i
+        values[idx] = base + (i >= spanLength - remainder ? 1 : 0)
+      }
     }
     prevIndex = end
     prevCum = targetCum
@@ -378,12 +389,21 @@ export function buildForecastWeeklyDistribution(
   )
   const reserve = backlogReserveByIndex(total, baseWeekly.length, tailStartIndex, finalBacklog)
   const fixedWeights = created.map((_, index) => (created[index - 1] ?? 0) + (created[index - 2] ?? 0) * 0.8 + 1)
-  tailStartIndex >= 0 && reserve.length && fixedWeights.forEach((_, index) => {
-    if (index < tailStartIndex) return
-    const reservePressure = 1 + Math.max(0, (reserve[tailStartIndex] ?? 0) - (reserve[index] ?? 0)) / Math.max(1, total)
-    fixedWeights[index] *= reservePressure
-  })
-  const fixedRaw = distributeIncreasingByConstraints(fixedTotal, baseWeekly.length, fixedConstraintsByCreated, createdCum, capWarnings)
+  if (tailStartIndex >= 0 && reserve.length) {
+    fixedWeights.forEach((_, index) => {
+      if (index < tailStartIndex) return
+      const reservePressure = 1 + Math.max(0, (reserve[tailStartIndex] ?? 0) - (reserve[index] ?? 0)) / Math.max(1, total)
+      fixedWeights[index] *= reservePressure
+    })
+  }
+  const fixedRaw = distributeIncreasingByConstraints(
+    fixedTotal,
+    baseWeekly.length,
+    fixedConstraintsByCreated,
+    createdCum,
+    capWarnings,
+    fixedWeights,
+  )
   const fixedAvail = enforceFixedAvailability(fixedRaw, created)
   const tailReserve = tailReserveFromActualBacklog(created, fixedAvail, tailStartIndex, finalBacklog)
   const fixed = smoothConvergenceBoundaryFixedSpike(
@@ -460,10 +480,12 @@ function splitWeeklyByRatios(
   ratios: number[],
   group: string,
 ): ForecastTeamRow[] {
+  const ratioTotal = ratios.reduce((sum, ratio) => sum + ratio, 0)
   return teams.map((team, teamIndex) => ({
     team,
     group,
     values: weeklyValues.map((total) => {
+      if (ratioTotal <= 0) return 0
       const raw = ratios.map((ratio) => total * ratio)
       return roundToTotal(raw, total)[teamIndex] ?? 0
     }),
@@ -487,7 +509,6 @@ export function allocateTeamsFromHistory(
     teams: string[],
     field: 'createdTeams' | 'fixedTeams',
     configs: TeamItem[],
-    label: string,
   ) => {
     if (!teams.length) return []
     const totals = teamTotals(histories, field, configs)
@@ -496,10 +517,6 @@ export function allocateTeamsFromHistory(
         .map((team) => [team, manualForecastRatio(team, configs)] as const)
         .filter((entry): entry is readonly [string, number] => entry[1] !== null),
     )
-    const missingTeams = teams.filter((team) => (totals.get(team) ?? 0) === 0 && !manualRatios.has(team))
-    if (missingTeams.length > 0) {
-      throw new Error(`勾选的${label} "${missingTeams.join(', ')}" 在历史参考项目中没有占比数据，请手动输入预估占比后再进行预测。`)
-    }
     const manualSum = Array.from(manualRatios.values()).reduce((sum, ratio) => sum + ratio, 0)
     if (manualSum > 0) {
       const remainingTeams = teams.filter((team) => !manualRatios.has(team))
@@ -515,11 +532,12 @@ export function allocateTeamsFromHistory(
       if (weightTotal > 0) return weights.map((value) => value / weightTotal)
     }
     const selectedTotal = teams.reduce((sum, team) => sum + (totals.get(team) ?? 0), 0)
+    if (selectedTotal <= 0) return teams.map(() => 0)
     return teams.map((team) => (totals.get(team) ?? 0) / selectedTotal)
   }
 
-  const createdRatios = buildRatios(effectiveTestingTeams, 'createdTeams', testingTeamConfigs, '测试团队')
-  const fixedRatios = buildRatios(selectedDevTeams, 'fixedTeams', devTeamConfigs, '开发团队')
+  const createdRatios = buildRatios(effectiveTestingTeams, 'createdTeams', testingTeamConfigs)
+  const fixedRatios = buildRatios(selectedDevTeams, 'fixedTeams', devTeamConfigs)
   return {
     createdTeams: splitWeeklyByRatios(
       effectiveTestingTeams,

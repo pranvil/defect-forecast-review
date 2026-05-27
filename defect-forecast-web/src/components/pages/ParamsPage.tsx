@@ -118,6 +118,74 @@ function AdjustableInput({ value, onChange, className }: { value: number, onChan
   )
 }
 
+function FlexibleDateInput({
+  value,
+  weekHint,
+  className,
+  inputClassName,
+  placeholder = 'YYYY-MM-DD',
+  onCommit,
+}: {
+  value: string
+  weekHint: string
+  className?: string
+  inputClassName?: string
+  placeholder?: string
+  onCommit: (iso: string) => void
+}) {
+  const [text, setText] = React.useState(value)
+
+  React.useEffect(() => {
+    setText(value)
+  }, [value])
+
+  const commitText = React.useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim()
+      if (!trimmed) {
+        onCommit('')
+        return
+      }
+      const iso = normalizeMilestoneDateToIso(trimmed, weekHint)
+      if (!iso) {
+        toast('日期无效', { description: '请使用 YYYY-MM-DD、YYYY/M/D 或 M/D' })
+        setText(value)
+        return
+      }
+      setText(iso)
+      onCommit(iso)
+    },
+    [onCommit, value, weekHint],
+  )
+
+  return (
+    <div className={`flex items-center gap-2 ${className ?? ''}`}>
+      <Input
+        value={text}
+        className={inputClassName}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => commitText(text)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+      />
+      <Input
+        aria-label="选择日期"
+        type="date"
+        className="h-8 w-11 shrink-0 rounded-lg px-1 text-transparent"
+        value={normalizeMilestoneDateToIso(value, weekHint)}
+        onChange={(e) => {
+          const iso = normalizeMilestoneDateToIso(e.target.value, weekHint)
+          if (!iso) return
+          setText(iso)
+          onCommit(iso)
+        }}
+      />
+    </div>
+  )
+}
+
 type MilestoneRatesForm = { dev: string; testComplete: string; testSubmit: string }
 
 const emptyMilestoneRates = (): MilestoneRatesForm => ({
@@ -172,13 +240,6 @@ function milestoneRowFromRates(
     ...(testCompletionRate !== undefined ? { testCompletionRate } : {}),
     ...(testSubmissionRate !== undefined ? { testSubmissionRate } : {}),
   }
-}
-
-function firstScheduledMilestone(milestones: MilestoneParam[]): MilestoneParam | null {
-  return milestones
-    .filter((milestone) => milestone.week.trim())
-    .slice()
-    .sort((a, b) => compareWeekAsc(a.week, b.week))[0] ?? null
 }
 
 function milestoneWeekForDataset(week: string): string {
@@ -405,16 +466,6 @@ export function ParamsPage() {
       milestones: nextMilestones,
       refProjects: latest.refProjects,
     }
-    const firstMilestone = firstScheduledMilestone(nextMilestones)
-    const startWeek = nextParams.startWeek.trim()
-    if (firstMilestone && startWeek && compareWeekAsc(firstMilestone.week, startWeek) !== 0) {
-      const message = `项目开始时间是 ${startWeek}，但第一个有周期的节点 ${firstMilestone.name} 是 ${firstMilestone.week}。请先修改项目开始时间或节点周期，保持两者一致。`
-      setForecastResult(null)
-      setOriginalDataset(null)
-      setForecastError(message)
-      toast('开始时间冲突', { description: message })
-      return
-    }
     setIsForecasting(true)
     setForecastError('')
     void services.forecastService
@@ -587,12 +638,13 @@ export function ParamsPage() {
                         onChange={(e) => setParams({ startWeek: e.target.value })}
                         placeholder="例如 26W2"
                       />
-                      <Input
-                        type="date"
-                        className="w-[9.5rem] shrink-0 rounded-xl"
+                      <FlexibleDateInput
                         value={milestoneWeekToMondayIso(params.startWeek)}
-                        onChange={(e) => {
-                          const week = milestoneMondayIsoToWeekLabel(e.target.value)
+                        weekHint={params.startWeek}
+                        className="min-w-[12rem] shrink-0"
+                        inputClassName="h-10 w-[9.5rem] rounded-xl px-3"
+                        onCommit={(iso) => {
+                          const week = milestoneMondayIsoToWeekLabel(iso)
                           if (week) setParams({ startWeek: week })
                         }}
                       />
@@ -606,12 +658,13 @@ export function ParamsPage() {
                         onChange={(e) => setParams({ endWeek: e.target.value })}
                         placeholder="例如 26W27"
                       />
-                      <Input
-                        type="date"
-                        className="w-[9.5rem] shrink-0 rounded-xl"
+                      <FlexibleDateInput
                         value={milestoneWeekToMondayIso(params.endWeek)}
-                        onChange={(e) => {
-                          const week = milestoneMondayIsoToWeekLabel(e.target.value)
+                        weekHint={params.endWeek}
+                        className="min-w-[12rem] shrink-0"
+                        inputClassName="h-10 w-[9.5rem] rounded-xl px-3"
+                        onCommit={(iso) => {
+                          const week = milestoneMondayIsoToWeekLabel(iso)
                           if (week) setParams({ endWeek: week })
                         }}
                       />
@@ -888,13 +941,14 @@ export function ParamsPage() {
                             />
                           </TableCell>
                           <TableCell>
-                            <Input
-                              defaultValue={m.date}
-                              className="h-8 min-w-[120px] rounded-lg px-2"
-                              onBlur={(e) => {
-                                const dateText = e.target.value.trim()
-                                if (dateText === m.date) return
-                                updateInlineMilestoneSchedule(idx, '', dateText)
+                            <FlexibleDateInput
+                              value={m.date}
+                              weekHint={m.week}
+                              className="min-w-[154px]"
+                              inputClassName="h-8 w-[116px] rounded-lg px-2"
+                              onCommit={(iso) => {
+                                if (iso === m.date) return
+                                updateInlineMilestoneSchedule(idx, '', iso)
                               }}
                             />
                           </TableCell>

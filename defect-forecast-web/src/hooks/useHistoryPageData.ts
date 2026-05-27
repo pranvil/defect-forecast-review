@@ -652,7 +652,7 @@ export function useHistoryPageData() {
         toast('删除失败', { description: e instanceof Error ? e.message : '服务调用失败' })
       }
     },
-    [focusProject, projects.length, refreshProjects, selectedProjects, setFocusProject, setSelectedProjects],
+    [focusProject, refreshProjects, selectedProjects, setFocusProject, setSelectedProjects],
   )
 
   // URL 长度阈值：超出后通过后端 create-filter 绕过 414

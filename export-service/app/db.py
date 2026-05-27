@@ -155,10 +155,14 @@ def migrate() -> None:
               team_type TEXT NOT NULL,
               enabled INTEGER NOT NULL,
               note TEXT NOT NULL DEFAULT '',
+              forecast_ratio REAL,
               updated_at TEXT NOT NULL
             )
             """
         )
+        team_config_cols = {row["name"] for row in conn.execute("PRAGMA table_info(team_config)").fetchall()}
+        if "forecast_ratio" not in team_config_cols:
+            conn.execute("ALTER TABLE team_config ADD COLUMN forecast_ratio REAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS app_config (

@@ -177,6 +177,11 @@ function parseNumber(value: string): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
+function parseSupportSim(value: string): ProjectSummary['supportSim'] | undefined {
+  if (value === 'Yes' || value === 'No') return value
+  return undefined
+}
+
 function parseDelimited(text: string): Record<string, string>[] {
   const normalizedText = text.replace(/^\uFEFF/, '')
   const firstLineEnd = normalizedText.indexOf('\n')
@@ -271,7 +276,7 @@ function rowsFromImport(text: string): ProjectSummary[] {
         mm: parseNumber(getValue(raw, ['mm', 'MM', '投入人力'])),
         supportSim: (() => {
           const v = getValue(raw, ['supportSim', 'Support_SIM', '支持SIM卡'])
-          return v ? (v as any) : undefined
+          return parseSupportSim(v)
         })(),
         validStartDate: normalizeImportDate(getValue(raw, ['validStartDate', '有效开始日期', '开始日期'])),
         validEndDate: normalizeImportDate(getValue(raw, ['validEndDate', '有效结束日期', '结束日期'])),
