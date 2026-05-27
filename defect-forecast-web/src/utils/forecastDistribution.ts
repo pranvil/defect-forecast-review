@@ -47,32 +47,6 @@ function cumulative(values: number[]): number[] {
   })
 }
 
-function tailReserveFromActualBacklog(
-  created: number[],
-  fixed: number[],
-  tailStartIndex: number,
-  finalBacklog: number,
-): number[] {
-  const n = Math.max(created.length, fixed.length)
-  if (n <= 0) return []
-  const createdCum = cumulative(created.slice(0, n))
-  const fixedCum = cumulative(fixed.slice(0, n))
-  const tail = Math.max(0, Math.min(n - 1, tailStartIndex))
-  const backlogAtTail = Math.max(0, (createdCum[tail] ?? 0) - (fixedCum[tail] ?? 0))
-  const end = Math.max(tail + 1, n - 1)
-  const span = Math.max(1, end - tail)
-  const reserve = Array.from({ length: n }, (_, idx) => {
-    if (idx < tail) return 0
-    const t = (idx - tail) / span
-    const v = Math.round(backlogAtTail + (finalBacklog - backlogAtTail) * t)
-    return Math.max(finalBacklog, v)
-  })
-  for (let i = tail + 1; i < n; i += 1) {
-    reserve[i] = Math.min(reserve[i] ?? finalBacklog, reserve[i - 1] ?? finalBacklog)
-  }
-  return reserve
-}
-
 function findWeekIndex(weekly: WeeklyPoint[], week: string): number {
   const normalized = week.trim()
   if (!normalized) return -1
@@ -105,7 +79,7 @@ function collectConstraints(
       (x): x is Constraint =>
         x.index >= 0 && typeof x.rate === 'number' && Number.isFinite(x.rate),
     )
-    .map((x) => ({ ...x, rate: Math.min(100, Math.max(1, x.rate)) }))
+    .map((x) => ({ ...x, rate: Math.min(100, Math.max(0, x.rate)) }))
     .sort((a, b) => a.index - b.index)
 }
 
@@ -113,110 +87,236 @@ function isVersionMilestone(name: string): boolean {
   return /^v\d*$/i.test(name.trim())
 }
 
-function isConvergenceMilestone(name: string): boolean {
-  return /^m5(?:-\d+)?$/i.test(name.trim()) || isVersionMilestone(name)
-}
-
-function inferTailStartIndex(weekly: WeeklyPoint[], milestones: MilestoneParam[]): number {
-  const convergenceWeeks = milestones
-    .filter((m) => isConvergenceMilestone(m.name) && m.week.trim())
-    .map((m) => m.week.trim())
-  if (!convergenceWeeks.length) return Math.max(0, weekly.length - 2)
-  const earliest = convergenceWeeks.slice().sort(compareWeekAsc)[0]!
-  const idx = findWeekIndex(weekly, earliest)
-  return idx >= 0 ? idx : Math.max(0, weekly.length - 2)
-}
-
 function finalBacklogTarget(totalCreated: number): number {
   const total = Math.max(0, Math.round(totalCreated))
   return Math.max(1, Math.round(total * FINAL_BACKLOG_RATIO))
 }
 
-function backlogReserveByIndex(totalCreated: number, length: number, tailStartIndex: number, finalTarget: number): number[] {
-  if (length <= 1 || totalCreated <= 0) return Array.from({ length }, () => 0)
-  const tail = Math.max(0, Math.min(length - 1, tailStartIndex))
-  const peak = Math.max(finalTarget, Math.round(totalCreated * 0.1))
-  const out = Array.from({ length }, (_, idx) => {
-    if (idx <= 0) return 0
-    if (idx >= length - 1) return finalTarget
-    if (idx <= tail) {
-      const ratio = tail <= 0 ? 0 : idx / tail
-      return Math.round(peak * Math.sin((Math.PI / 2) * ratio))
-    }
-    const span = Math.max(1, (length - 1) - tail)
-    const ratio = (idx - tail) / span
-    return Math.round(peak + (finalTarget - peak) * ratio)
-  })
-  for (let i = Math.max(1, tail + 1); i < length - 1; i += 1) {
-    out[i] = Math.min(out[i] ?? 0, out[i - 1] ?? 0)
+function createdLifecycleWeight(index: number, length: number, versionStartIndex: number): number {
+  if (length <= 1) return 1
+  const ratio = index / (length - 1)
+  let weight: number
+  if (ratio < 0.16) {
+    weight = 0.72 + 0.42 * (ratio / 0.16)
+  } else if (ratio < 0.34) {
+    weight = 1.14 - 0.12 * ((ratio - 0.16) / 0.18)
+  } else if (ratio < 0.72) {
+    weight = 1.02 + (0.28 - 1.02) * ((ratio - 0.34) / 0.38)
+  } else {
+    weight = Math.max(0.03, 0.28 + (0.03 - 0.28) * ((ratio - 0.72) / 0.28))
   }
-  return out.map((x) => Math.max(0, x))
+  if (versionStartIndex < length && index >= versionStartIndex) {
+    const afterVersionRatio = (index - versionStartIndex) / Math.max(1, length - 1 - versionStartIndex)
+    weight *= Math.max(0.12, 0.38 * (1 - afterVersionRatio))
+  }
+  return Math.max(0.01, weight)
 }
 
-function distributeIncreasingByConstraints(
+function distributeByCumulativeTargets(
   total: number,
   length: number,
   constraints: Constraint[],
-  maxCumByIndex?: number[],
-  warnings?: ForecastWarning[],
-  weights?: number[],
+  weightForIndex: (index: number) => number,
 ): number[] {
   const values = Array.from({ length }, () => 0)
+  if (length <= 0 || total <= 0) return values
+  const points = new Map<number, number>()
+  constraints.forEach((constraint) => {
+    const idx = Math.max(0, Math.min(length - 1, constraint.index))
+    const target = constraint.targetCum ?? Math.round((total * constraint.rate) / 100)
+    points.set(idx, Math.max(points.get(idx) ?? 0, target))
+  })
+  points.set(length - 1, total)
+
   let prevIndex = -1
   let prevCum = 0
-  const pointsByIndex = new Map<number, number>()
-  constraints.forEach((c) => {
-    const requestedCum = c.targetCum ?? Math.round((total * c.rate) / 100)
-    const cappedCum = maxCumByIndex ? Math.min(requestedCum, maxCumByIndex[c.index] ?? requestedCum) : requestedCum
-    if (warnings && cappedCum < requestedCum) {
+  Array.from(points.entries())
+    .map(([index, cum]) => ({ index, cum }))
+    .sort((a, b) => a.index - b.index)
+    .forEach((point) => {
+      const end = Math.min(length - 1, Math.max(prevIndex + 1, point.index))
+      const targetCum = Math.max(prevCum, Math.min(total, point.cum))
+      const amount = targetCum - prevCum
+      const span = Array.from({ length: end - prevIndex }, (_, i) => prevIndex + 1 + i)
+      if (!span.length) {
+        prevIndex = end
+        prevCum = targetCum
+        return
+      }
+      const weights = span.map(weightForIndex)
+      const weightTotal = weights.reduce((sum, value) => sum + value, 0) || span.length
+      const rounded = roundToTotal(weights.map((weight) => (amount * weight) / weightTotal), amount)
+      span.forEach((idx, offset) => {
+        values[idx] = rounded[offset] ?? 0
+      })
+      prevIndex = end
+      prevCum = targetCum
+    })
+  return values
+}
+
+function smoothCreatedPostPeak(values: number[], peakIndex: number): number[] {
+  const out = values.slice()
+  const start = Math.max(1, Math.min(out.length - 1, peakIndex + 1))
+  let changed = true
+  let passes = 0
+  while (changed && passes < 50) {
+    changed = false
+    passes += 1
+    for (let source = start; source < out.length; source += 1) {
+      let guard = 0
+      while (source > 0 && (out[source] ?? 0) > (out[source - 1] ?? 0) && guard < 10000) {
+        guard += 1
+        const candidates = Array.from({ length: source }, (_, idx) => idx)
+          .sort((a, b) => (out[a] ?? 0) - (out[b] ?? 0) || b - a)
+        const target = candidates[0]
+        if (target === undefined) break
+        out[source] = (out[source] ?? 0) - 1
+        out[target] = (out[target] ?? 0) + 1
+        changed = true
+      }
+    }
+  }
+  return out
+}
+
+function inferVersionStartIndex(weekly: WeeklyPoint[], milestones: MilestoneParam[]): number {
+  const versionWeeks = milestones
+    .filter((m) => isVersionMilestone(m.name) && m.week.trim())
+    .map((m) => m.week.trim())
+  if (!versionWeeks.length) return weekly.length
+  const earliest = versionWeeks.slice().sort(compareWeekAsc)[0]!
+  const idx = findWeekIndex(weekly, earliest)
+  return idx >= 0 ? idx : weekly.length
+}
+
+function backlogTargetShape(
+  totalCreated: number,
+  length: number,
+  finalBacklog: number,
+  fixedConstraints: Constraint[],
+  createdCum: number[],
+): number[] {
+  if (length <= 0) return []
+  if (length === 1) return [Math.max(0, finalBacklog)]
+  const peakIndex = Math.max(1, Math.min(length - 1, Math.round((length - 1) / 3)))
+  const constraintBacklogs = fixedConstraints.map((constraint) => {
+    const idx = Math.max(0, Math.min(length - 1, constraint.index))
+    return Math.max(0, (createdCum[idx] ?? 0) - (constraint.targetCum ?? 0))
+  })
+  const peakBacklog = Math.max(finalBacklog, Math.round(totalCreated * 0.12), 1, ...constraintBacklogs)
+  const anchors = new Map<number, number>()
+  anchors.set(0, Math.round(peakBacklog * Math.sin((Math.PI / 2) / (peakIndex + 1))))
+  anchors.set(peakIndex, peakBacklog)
+  fixedConstraints.forEach((constraint) => {
+    const idx = Math.max(0, Math.min(length - 1, constraint.index))
+    const requiredBacklog = Math.max(0, (createdCum[idx] ?? 0) - (constraint.targetCum ?? 0))
+    anchors.set(idx, Math.max(anchors.get(idx) ?? 0, requiredBacklog))
+  })
+  anchors.set(length - 1, Math.max(0, finalBacklog))
+  const points = Array.from(anchors.entries())
+    .map(([index, backlog]) => ({ index, backlog }))
+    .sort((a, b) => a.index - b.index)
+  const out = Array.from({ length }, () => Math.max(0, finalBacklog))
+  for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex += 1) {
+    const start = points[pointIndex]!
+    const end = points[pointIndex + 1]!
+    const span = Math.max(1, end.index - start.index)
+    for (let idx = start.index; idx <= end.index; idx += 1) {
+      const ratio = (idx - start.index) / span
+      const smooth = (1 - Math.cos(Math.PI * ratio)) / 2
+      out[idx] = Math.round(start.backlog + (end.backlog - start.backlog) * smooth)
+    }
+  }
+  return out.map((value, idx) => Math.max(0, Math.min(createdCum[idx] ?? value, value)))
+}
+
+function fixedFromBacklogTarget(created: number[], targetBacklog: number[]): number[] {
+  const createdCum = cumulative(created)
+  const desiredCum = created.map((_, idx) => {
+    const target = Math.max(0, targetBacklog[idx] ?? 0)
+    return Math.max(0, Math.min(createdCum[idx] ?? 0, Math.round((createdCum[idx] ?? 0) - target)))
+  })
+  for (let idx = 1; idx < desiredCum.length; idx += 1) {
+    desiredCum[idx] = Math.max(desiredCum[idx] ?? 0, desiredCum[idx - 1] ?? 0)
+  }
+  return desiredCum.map((cum, idx) => cum - (desiredCum[idx - 1] ?? 0))
+}
+
+function cumulativeSlackFrom(created: number[], fixed: number[], startIndex: number): number {
+  const createdCum = cumulative(created)
+  const fixedCum = cumulative(fixed)
+  let slack = Number.POSITIVE_INFINITY
+  for (let idx = startIndex; idx < created.length; idx += 1) {
+    slack = Math.min(slack, (createdCum[idx] ?? 0) - (fixedCum[idx] ?? 0))
+  }
+  return Number.isFinite(slack) ? Math.max(0, slack) : 0
+}
+
+function enforceFixedMinimumConstraints(
+  fixed: number[],
+  created: number[],
+  constraints: Constraint[],
+): { fixed: number[]; warnings: ForecastWarning[] } {
+  const out = fixed.slice()
+  const warnings: ForecastWarning[] = []
+  for (const constraint of constraints) {
+    const idx = Math.max(0, Math.min(out.length - 1, constraint.index))
+    let currentCum = cumulative(out)[idx] ?? 0
+    const targetCum = Math.max(0, constraint.targetCum ?? 0)
+    let deficit = Math.max(0, targetCum - currentCum)
+    let guard = 0
+    while (deficit > 0 && guard < 100000) {
+      guard += 1
+      const candidates = Array.from({ length: idx + 1 }, (_, i) => i)
+        .filter((candidate) => cumulativeSlackFrom(created, out, candidate) > 0)
+        .sort((a, b) => (out[a] ?? 0) - (out[b] ?? 0) || b - a)
+      const target = candidates[0]
+      if (target === undefined) break
+      out[target] = (out[target] ?? 0) + 1
+      deficit -= 1
+      currentCum += 1
+    }
+    if (deficit > 0) {
       warnings.push({
         type: 'milestone_conflict',
         severity: 'warning',
-        milestone: c.milestone,
-        metric: c.metric,
-        currentRate: c.rate,
-        suggestedRate: Math.round((cappedCum / Math.max(1, total)) * 100),
-        currentWeek: c.week,
-        message: `${c.milestone} 的开发解决率 ${c.rate}% 会让 Backlog 过低，已按保留合理 Backlog 的上限 ${Math.round((cappedCum / Math.max(1, total)) * 100)}% 计算。`,
+        milestone: constraint.milestone,
+        metric: constraint.metric,
+        currentRate: constraint.rate,
+        suggestedRate: Math.round((currentCum / Math.max(1, targetCum)) * constraint.rate),
+        currentWeek: constraint.week,
+        message: `${constraint.milestone} 的开发解决率 ${constraint.rate}% 与 created 可用量冲突，已尽量补足到 ${currentCum}/${targetCum}。`,
       })
     }
-    pointsByIndex.set(c.index, Math.max(pointsByIndex.get(c.index) ?? 0, cappedCum))
-  })
-  pointsByIndex.set(length - 1, total)
-  const points = Array.from(pointsByIndex.entries())
-    .map(([index, cum]) => ({ index, cum }))
-    .sort((a, b) => a.index - b.index)
-
-  for (const point of points) {
-    const end = Math.min(length - 1, Math.max(prevIndex + 1, point.index))
-    const targetCum = Math.max(prevCum, Math.min(total, point.cum))
-    const amount = targetCum - prevCum
-    const spanLength = end - prevIndex
-    if (spanLength <= 0) {
-      prevIndex = end
-      prevCum = targetCum
-      continue
-    }
-    const span = Array.from({ length: spanLength }, (_, i) => prevIndex + 1 + i)
-    const spanWeights = weights ? span.map((idx) => Math.max(0, weights[idx] ?? 0)) : []
-    const totalWeight = spanWeights.reduce((sum, value) => sum + value, 0)
-    if (weights && totalWeight > 0) {
-      const rounded = roundToTotal(spanWeights.map((weight) => (amount * weight) / totalWeight), amount)
-      span.forEach((idx, i) => {
-        values[idx] = rounded[i] ?? 0
-      })
-    } else {
-      const base = Math.floor(amount / spanLength)
-      const remainder = amount - base * spanLength
-      for (let i = 0; i < spanLength; i += 1) {
-        const idx = prevIndex + 1 + i
-        values[idx] = base + (i >= spanLength - remainder ? 1 : 0)
-      }
-    }
-    prevIndex = end
-    prevCum = targetCum
   }
-  return values
+  return { fixed: out, warnings }
+}
+
+function hardConstraintWarnings(
+  weekly: WeeklyPoint[],
+  constraints: Constraint[],
+  metric: RateMetric,
+  totalCreated: number,
+): ForecastWarning[] {
+  return constraints.flatMap((constraint) => {
+    const idx = Math.max(0, Math.min(weekly.length - 1, constraint.index))
+    const row = weekly[idx]
+    if (!row) return []
+    const actual = metric === 'testSubmissionRate' ? row.cumCreated : row.cumFixed
+    const target = constraint.targetCum ?? Math.round((totalCreated * constraint.rate) / 100)
+    if (actual >= target) return []
+    return [{
+      type: 'milestone_conflict' as const,
+      severity: 'warning' as const,
+      milestone: constraint.milestone,
+      metric,
+      currentRate: constraint.rate,
+      suggestedRate: Math.round((actual / Math.max(1, target)) * constraint.rate),
+      currentWeek: constraint.week,
+      message: `${constraint.milestone} 的${metric === 'testSubmissionRate' ? '测试提交率' : '开发解决率'}未达硬指标：${actual}/${target}。`,
+    }]
+  })
 }
 
 function enforceFixedAvailability(fixed: number[], created: number[]): number[] {
@@ -235,129 +335,6 @@ function enforceFixedAvailability(fixed: number[], created: number[]): number[] 
   return out
 }
 
-function enforceTailBacklogNonIncreasing(fixed: number[], created: number[], tailStartIndex: number): number[] {
-  const out = fixed.slice()
-  let backlog = 0
-  for (let idx = 0; idx < out.length; idx += 1) {
-    const previousBacklog = backlog
-    backlog += (created[idx] ?? 0) - (out[idx] ?? 0)
-    if (idx <= tailStartIndex || backlog <= previousBacklog) continue
-    const needed = backlog - previousBacklog
-    let pulled = 0
-    for (let j = idx + 1; j < out.length && pulled < needed; j += 1) {
-      const available = out[j] ?? 0
-      if (available <= 0) continue
-      const take = Math.min(available, needed - pulled)
-      out[j] = available - take
-      out[idx] = (out[idx] ?? 0) + take
-      pulled += take
-    }
-    backlog -= pulled
-  }
-  return enforceFixedAvailability(out, created)
-}
-
-function frontLoadFixed(
-  fixed: number[],
-  created: number[],
-  reserveByIndex: number[],
-  tailStartIndex: number,
-): number[] {
-  const out = fixed.slice()
-  const start = Math.max(1, tailStartIndex + 1)
-  for (let source = start; source < out.length; source += 1) {
-    let movable = out[source] ?? 0
-    while (movable > 0) {
-      const candidate = out.slice()
-      candidate[source] = (candidate[source] ?? 0) - 1
-      const createdCum = cumulative(created)
-      let fixedCum = 0
-      let target = -1
-      for (let idx = 0; idx < source; idx += 1) {
-        const reserve = reserveByIndex[idx] ?? 0
-        const backlogBefore = (createdCum[idx] ?? 0) - fixedCum
-        if (backlogBefore <= reserve) {
-          fixedCum += candidate[idx] ?? 0
-          continue
-        }
-        if (idx < tailStartIndex) {
-          fixedCum += candidate[idx] ?? 0
-          continue
-        }
-        if (fixedCum + (candidate[idx] ?? 0) + 1 <= Math.max(0, (createdCum[idx] ?? 0) - reserve)) {
-          target = idx
-          break
-        }
-        fixedCum += candidate[idx] ?? 0
-      }
-      if (target < 0) break
-      candidate[target] = (candidate[target] ?? 0) + 1
-      const normalized = enforceFixedAvailability(candidate, created)
-      if (normalized[source] !== candidate[source] || normalized[target] !== candidate[target]) break
-      out[source] -= 1
-      out[target] = (out[target] ?? 0) + 1
-      movable -= 1
-    }
-  }
-  return out
-}
-
-function tailBacklogIsValid(fixed: number[], created: number[], tailStartIndex: number): boolean {
-  let backlog = 0
-  for (let idx = 0; idx < fixed.length; idx += 1) {
-    const previousBacklog = backlog
-    backlog += (created[idx] ?? 0) - (fixed[idx] ?? 0)
-    if (backlog < 0) return false
-    if (idx > tailStartIndex && backlog > previousBacklog) return false
-  }
-  return true
-}
-
-function smoothTailFixedSpikes(fixed: number[], created: number[], tailStartIndex: number): number[] {
-  const out = fixed.slice()
-  const start = Math.max(0, tailStartIndex)
-  for (let source = out.length - 1; source > start; source -= 1) {
-    let guard = 0
-    while (guard < 200) {
-      guard += 1
-      const targets = Array.from({ length: source - start }, (_, i) => start + i)
-        .sort((a, b) => (out[a] ?? 0) - (out[b] ?? 0) || b - a)
-      const target = targets[0]
-      if (target === undefined) break
-      if ((out[source] ?? 0) <= (out[target] ?? 0)) break
-      const candidate = out.slice()
-      candidate[source] = (candidate[source] ?? 0) - 1
-      candidate[target] = (candidate[target] ?? 0) + 1
-      if (!tailBacklogIsValid(candidate, created, tailStartIndex)) break
-      out[source] = candidate[source]!
-      out[target] = candidate[target]!
-    }
-  }
-  return out
-}
-
-function smoothConvergenceBoundaryFixedSpike(fixed: number[], created: number[], tailStartIndex: number, window = 2): number[] {
-  const out = fixed.slice()
-  const source = tailStartIndex
-  if (source <= 0 || source >= out.length) return out
-  const start = Math.max(1, source - window + 1)
-  let guard = 0
-  while (guard < 400) {
-    guard += 1
-    if ((out[source] ?? 0) <= (out[source - 1] ?? 0) + 1) break
-    const target = source - 1
-    if (target < start) break
-    const candidate = out.slice()
-    candidate[source] = (candidate[source] ?? 0) - 1
-    candidate[target] = (candidate[target] ?? 0) + 1
-    const normalized = enforceFixedAvailability(candidate, created)
-    if (normalized[source] !== candidate[source] || normalized[target] !== candidate[target]) break
-    out[source] = normalized[source]!
-    out[target] = normalized[target]!
-  }
-  return out
-}
-
 export function buildForecastWeeklyDistribution(
   baseWeekly: WeeklyPoint[],
   milestones: MilestoneParam[],
@@ -367,11 +344,18 @@ export function buildForecastWeeklyDistribution(
   const total = Math.max(0, Math.round(totalDefects))
   const targetMode = options.milestoneTargetMode ?? 'currentWeek'
   const createdConstraints = collectConstraints(baseWeekly, milestones, 'testSubmissionRate', targetMode)
-  const tailStartIndex = inferTailStartIndex(baseWeekly, milestones)
-  const created = distributeIncreasingByConstraints(total, baseWeekly.length, createdConstraints)
+  const versionStartIndex = inferVersionStartIndex(baseWeekly, milestones)
+  const created = smoothCreatedPostPeak(
+    distributeByCumulativeTargets(
+      total,
+      baseWeekly.length,
+      createdConstraints,
+      (index) => createdLifecycleWeight(index, baseWeekly.length, versionStartIndex),
+    ),
+    Math.round((baseWeekly.length - 1) / 3),
+  )
 
   const fixedConstraints = collectConstraints(baseWeekly, milestones, 'devResolutionRate', targetMode)
-  const capWarnings: ForecastWarning[] = []
   const createdCum = cumulative(created)
   const fixedConstraintsByCreated = fixedConstraints.map((constraint) => ({
     ...constraint,
@@ -379,43 +363,10 @@ export function buildForecastWeeklyDistribution(
   }))
   const lastFixedConstraint = fixedConstraints.at(-1)
   const finalBacklog = lastFixedConstraint && lastFixedConstraint.rate >= 100 ? 0 : finalBacklogTarget(total)
-  const defaultFixedTotal = Math.max(0, total - finalBacklog)
-  const fixedTotal = Math.min(
-    total,
-    fixedConstraintsByCreated.reduce(
-      (max, constraint) => Math.max(max, constraint.targetCum ?? 0),
-      defaultFixedTotal,
-    ),
-  )
-  const reserve = backlogReserveByIndex(total, baseWeekly.length, tailStartIndex, finalBacklog)
-  const fixedWeights = created.map((_, index) => (created[index - 1] ?? 0) + (created[index - 2] ?? 0) * 0.8 + 1)
-  if (tailStartIndex >= 0 && reserve.length) {
-    fixedWeights.forEach((_, index) => {
-      if (index < tailStartIndex) return
-      const reservePressure = 1 + Math.max(0, (reserve[tailStartIndex] ?? 0) - (reserve[index] ?? 0)) / Math.max(1, total)
-      fixedWeights[index] *= reservePressure
-    })
-  }
-  const fixedRaw = distributeIncreasingByConstraints(
-    fixedTotal,
-    baseWeekly.length,
-    fixedConstraintsByCreated,
-    createdCum,
-    capWarnings,
-    fixedWeights,
-  )
-  const fixedAvail = enforceFixedAvailability(fixedRaw, created)
-  const tailReserve = tailReserveFromActualBacklog(created, fixedAvail, tailStartIndex, finalBacklog)
-  const fixed = smoothConvergenceBoundaryFixedSpike(
-    smoothTailFixedSpikes(
-      enforceTailBacklogNonIncreasing(frontLoadFixed(fixedAvail, created, tailReserve, tailStartIndex), created, tailStartIndex),
-    created,
-    tailStartIndex,
-    ),
-    created,
-    tailStartIndex,
-    2,
-  )
+  const backlogTarget = backlogTargetShape(total, baseWeekly.length, finalBacklog, fixedConstraintsByCreated, createdCum)
+  const fixedInitial = enforceFixedAvailability(fixedFromBacklogTarget(created, backlogTarget), created)
+  const enforced = enforceFixedMinimumConstraints(fixedInitial, created, fixedConstraintsByCreated)
+  const fixed = enforceFixedAvailability(enforced.fixed, created)
 
   let cumCreated = 0
   let cumFixed = 0
@@ -434,7 +385,9 @@ export function buildForecastWeeklyDistribution(
   return {
     weekly,
     warnings: [
-      ...capWarnings,
+      ...enforced.warnings,
+      ...hardConstraintWarnings(weekly, createdConstraints, 'testSubmissionRate', total),
+      ...hardConstraintWarnings(weekly, fixedConstraintsByCreated, 'devResolutionRate', total),
     ],
   }
 }

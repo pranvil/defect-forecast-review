@@ -21,7 +21,7 @@ import argparse
 import math
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 
 FINAL_BACKLOG_RATIO = 0.002
@@ -160,7 +160,7 @@ def collect_constraints(
                 "milestone": m.name,
                 "week": m.week,
                 "index": idx,
-                "rate": clamp(float(rate), 1.0, 100.0),
+                "rate": clamp(float(rate), 0.0, 100.0),
                 "metric": metric,
             }
         )
@@ -297,6 +297,163 @@ def distribute_increasing_by_constraints(
         prev_cum = target_cum
 
     return values
+
+
+def created_lifecycle_weight(index: int, length: int, version_start_index: int) -> float:
+    if length <= 1:
+        return 1.0
+    ratio = index / (length - 1)
+    if ratio < 0.16:
+        weight = 0.72 + 0.42 * (ratio / 0.16)
+    elif ratio < 0.34:
+        weight = 1.14 - 0.12 * ((ratio - 0.16) / 0.18)
+    elif ratio < 0.72:
+        weight = 1.02 + (0.28 - 1.02) * ((ratio - 0.34) / 0.38)
+    else:
+        weight = max(0.03, 0.28 + (0.03 - 0.28) * ((ratio - 0.72) / 0.28))
+    if version_start_index < length and index >= version_start_index:
+        after_version_ratio = (index - version_start_index) / max(1, length - 1 - version_start_index)
+        weight *= max(0.12, 0.38 * (1 - after_version_ratio))
+    return max(0.01, weight)
+
+
+def distribute_by_cumulative_targets(
+    total: int,
+    length: int,
+    constraints: List[dict],
+    weight_for_index: Callable[[int], float],
+) -> List[int]:
+    values = [0 for _ in range(length)]
+    if length <= 0 or total <= 0:
+        return values
+    points_by_index: dict[int, int] = {}
+    for c in constraints:
+        idx = max(0, min(length - 1, int(c["index"])))
+        target = int(c.get("targetCum", round(total * float(c["rate"]) / 100)))
+        points_by_index[idx] = max(points_by_index.get(idx, 0), target)
+    points_by_index[length - 1] = total
+
+    prev_index = -1
+    prev_cum = 0
+    for index, cum in sorted(points_by_index.items(), key=lambda item: item[0]):
+        end = min(length - 1, max(prev_index + 1, int(index)))
+        target_cum = max(prev_cum, min(total, int(cum)))
+        amount = target_cum - prev_cum
+        span = list(range(prev_index + 1, end + 1))
+        if not span:
+            prev_index = end
+            prev_cum = target_cum
+            continue
+        weights = [weight_for_index(idx) for idx in span]
+        weight_total = sum(weights) or len(span) or 1
+        rounded = round_to_total([amount * weight / weight_total for weight in weights], amount)
+        for idx, value in zip(span, rounded):
+            values[idx] = int(value)
+        prev_index = end
+        prev_cum = target_cum
+    return values
+
+
+def smooth_created_post_peak(values: List[int], peak_index: int) -> List[int]:
+    out = values[:]
+    start = max(1, min(len(out) - 1, int(peak_index) + 1))
+    changed = True
+    passes = 0
+    while changed and passes < 50:
+        changed = False
+        passes += 1
+        for source in range(start, len(out)):
+            guard = 0
+            while source > 0 and out[source] > out[source - 1] and guard < 10000:
+                guard += 1
+                candidates = list(range(source))
+                candidates.sort(key=lambda idx: (out[idx], -idx))
+                if not candidates:
+                    break
+                target = candidates[0]
+                out[source] -= 1
+                out[target] += 1
+                changed = True
+    return out
+
+
+def backlog_target_shape(
+    total_created: int,
+    length: int,
+    final_backlog: int,
+    fixed_constraints: List[dict],
+    created_cum: List[int],
+) -> List[int]:
+    if length <= 0:
+        return []
+    if length == 1:
+        return [max(0, int(final_backlog))]
+    peak_index = max(1, min(length - 1, round((length - 1) / 3)))
+    constraint_backlogs = [
+        max(0, int(created_cum[max(0, min(length - 1, int(c["index"])))] - int(c.get("targetCum", 0))))
+        for c in fixed_constraints
+    ]
+    peak_backlog = max(int(final_backlog), round(total_created * 0.12), 1, *constraint_backlogs)
+    anchors = {
+        0: round(peak_backlog * math.sin((math.pi / 2) / (peak_index + 1))),
+        peak_index: peak_backlog,
+        length - 1: max(0, int(final_backlog)),
+    }
+    for c in fixed_constraints:
+        idx = max(0, min(length - 1, int(c["index"])))
+        required_backlog = max(0, int(created_cum[idx]) - int(c.get("targetCum", 0)))
+        anchors[idx] = max(anchors.get(idx, 0), required_backlog)
+    points = sorted([{"index": idx, "backlog": backlog} for idx, backlog in anchors.items()], key=lambda item: int(item["index"]))
+    out = [max(0, int(final_backlog)) for _ in range(length)]
+    for point_index in range(len(points) - 1):
+        start = points[point_index]
+        end = points[point_index + 1]
+        start_idx = int(start["index"])
+        end_idx = int(end["index"])
+        span = max(1, end_idx - start_idx)
+        for idx in range(start_idx, end_idx + 1):
+            ratio = (idx - start_idx) / span
+            smooth = (1 - math.cos(math.pi * ratio)) / 2
+            out[idx] = round(int(start["backlog"]) + (int(end["backlog"]) - int(start["backlog"])) * smooth)
+    return [max(0, min(created_cum[idx] if idx < len(created_cum) else value, value)) for idx, value in enumerate(out)]
+
+
+def fixed_from_backlog_target(created: List[int], target_backlog: List[int]) -> List[int]:
+    created_cum = cumulative(created)
+    desired_cum: List[int] = []
+    for idx, _ in enumerate(created):
+        target = max(0, int(target_backlog[idx]) if idx < len(target_backlog) else 0)
+        desired_cum.append(max(0, min(created_cum[idx], round(created_cum[idx] - target))))
+    for idx in range(1, len(desired_cum)):
+        desired_cum[idx] = max(desired_cum[idx], desired_cum[idx - 1])
+    return [value - (desired_cum[idx - 1] if idx > 0 else 0) for idx, value in enumerate(desired_cum)]
+
+
+def cumulative_slack_from(created: List[int], fixed: List[int], start_index: int) -> int:
+    created_cum = cumulative(created)
+    fixed_cum = cumulative(fixed)
+    slack = math.inf
+    for idx in range(start_index, len(created)):
+        slack = min(slack, created_cum[idx] - fixed_cum[idx])
+    return max(0, int(slack if math.isfinite(slack) else 0))
+
+
+def enforce_fixed_minimum_constraints(fixed: List[int], created: List[int], constraints: List[dict]) -> List[int]:
+    out = fixed[:]
+    for constraint in constraints:
+        idx = max(0, min(len(out) - 1, int(constraint["index"])))
+        target_cum = max(0, int(constraint.get("targetCum", 0)))
+        deficit = max(0, target_cum - sum(out[: idx + 1]))
+        guard = 0
+        while deficit > 0 and guard < 100000:
+            guard += 1
+            candidates = [i for i in range(idx + 1) if cumulative_slack_from(created, out, i) > 0]
+            candidates.sort(key=lambda i: (out[i], -i))
+            if not candidates:
+                break
+            out[candidates[0]] += 1
+            deficit -= 1
+    return out
 
 
 def move_total(values: List[int], from_indexes: List[int], to_indexes: List[int], amount: int, min_values: Optional[List[int]] = None) -> int:
@@ -597,14 +754,19 @@ def build_distribution(
     base_weekly = build_base_weekly(start_week, weeks)
     total = max(0, int(round(total_defects)))
 
-    tail_start = infer_tail_start_index(base_weekly, milestones)
-    # Milestones split the lifecycle into cumulative target segments.
     created_constraints = collect_constraints(base_weekly, milestones, "testSubmissionRate", target_mode)
-    created = distribute_increasing_by_constraints(total, len(base_weekly), created_constraints)
-
+    version_start = infer_version_start_index(base_weekly, milestones)
+    created = smooth_created_post_peak(
+        distribute_by_cumulative_targets(
+            total,
+            len(base_weekly),
+            created_constraints,
+            lambda idx: created_lifecycle_weight(idx, len(base_weekly), version_start),
+        ),
+        round((len(base_weekly) - 1) / 3),
+    )
     created_cum = cumulative(created)
 
-    # fixed: distribute with dev resolution constraints, but shape by backlog reserve
     fixed_constraints = collect_constraints(base_weekly, milestones, "devResolutionRate", target_mode)
     fixed_constraints_by_created = []
     for c in fixed_constraints:
@@ -614,40 +776,12 @@ def build_distribution(
 
     last_fixed_constraint = fixed_constraints[-1] if fixed_constraints else None
     final_backlog = 0 if last_fixed_constraint and float(last_fixed_constraint["rate"]) >= 100 else final_backlog_target(total)
-    fixed_total = max(0, total - final_backlog)
-    reserve = backlog_reserve_shape(total, len(base_weekly), tail_start, final_backlog)
-
-    fixed_weights = [
-        (created[i - 1] if i > 0 else 0) + (created[i - 2] if i > 1 else 0) * 0.8 + 1
-        for i in range(len(created))
-    ]
-    if tail_start >= 0 and reserve:
-        for i in range(tail_start, len(fixed_weights)):
-            reserve_pressure = 1.0 + max(0, int(reserve[tail_start]) - int(reserve[i])) / max(1, int(total))
-            fixed_weights[i] *= reserve_pressure
-    # devResolutionRate 优先：reserve 只影响权重倾向，不再作为 fixed 累计硬上限。
-    fixed_raw = distribute_increasing_by_constraints(
-        fixed_total,
-        len(base_weekly),
-        fixed_constraints_by_created,
-        created_cum,
-        fixed_weights,
-    )
-    fixed = smooth_tail_fixed_spikes(
-        enforce_tail_backlog_non_increasing(
-            front_load_fixed(
-                (fixed_avail := enforce_fixed_availability(fixed_raw, created)),
-                created,
-                tail_reserve_from_actual_backlog(created, fixed_avail, tail_start, final_backlog),
-                tail_start,
-            ),
-            created,
-            tail_start,
-        ),
+    backlog_target = backlog_target_shape(total, len(base_weekly), final_backlog, fixed_constraints_by_created, created_cum)
+    fixed_initial = enforce_fixed_availability(fixed_from_backlog_target(created, backlog_target), created)
+    fixed = enforce_fixed_availability(
+        enforce_fixed_minimum_constraints(fixed_initial, created, fixed_constraints_by_created),
         created,
-        tail_start,
     )
-    fixed = smooth_convergence_boundary_fixed_spike(fixed, created, tail_start, window=2)
 
     out: List[WeeklyPoint] = []
     cum_c = 0
@@ -666,9 +800,12 @@ def build_distribution(
             )
         )
 
+    peak_index = max(1, min(len(base_weekly) - 1, round((len(base_weekly) - 1) / 3)))
     meta = {
-        "tailStartIndex": tail_start,
-        "tailStartWeek": out[tail_start].weekLabel if out else "",
+        "backlogPeakIndex": peak_index,
+        "backlogPeakWeek": out[peak_index].weekLabel if out else "",
+        "versionStartIndex": version_start,
+        "versionStartWeek": out[version_start].weekLabel if 0 <= version_start < len(out) else "",
         "finalBacklogTarget": final_backlog,
         "targetMode": target_mode,
     }
@@ -684,17 +821,17 @@ def verify(
     if not weekly:
         return ["empty weekly"]
 
-    tail = int(meta.get("tailStartIndex", 0))
+    peak = int(meta.get("backlogPeakIndex", max(1, round((len(weekly) - 1) / 3))))
     # backlog >= 0
     for row in weekly:
         if row.backlog < 0:
             errors.append(f"backlog<0 at {row.weekLabel}: {row.backlog}")
             break
-    # tail backlog non-increasing
-    for i in range(max(1, tail + 1), len(weekly)):
+    # Backlog should decline smoothly after the one-third lifecycle peak.
+    for i in range(max(1, peak + 1), len(weekly)):
         if weekly[i].backlog > weekly[i - 1].backlog:
             errors.append(
-                f"tail backlog rises at {weekly[i-1].weekLabel}->{weekly[i].weekLabel}: "
+                f"post-peak backlog rises at {weekly[i-1].weekLabel}->{weekly[i].weekLabel}: "
                 f"{weekly[i-1].backlog}->{weekly[i].backlog}"
             )
             break
@@ -764,7 +901,10 @@ def main() -> int:
     weekly, meta = build_distribution(args.start, args.weeks, args.total, milestones, args.target_mode)
     errors = verify(weekly, milestones, meta)
 
-    print(f"tailStart={meta['tailStartWeek']} (index={meta['tailStartIndex']}) finalBacklogTarget={meta['finalBacklogTarget']}")
+    print(
+        f"backlogPeak={meta['backlogPeakWeek']} (index={meta['backlogPeakIndex']}) "
+        f"versionStart={meta['versionStartWeek'] or '-'} finalBacklogTarget={meta['finalBacklogTarget']}"
+    )
     print("week,created,fixed,cumCreated,cumFixed,backlog")
     for r in weekly:
         print(f"{r.weekLabel},{r.created},{r.fixed},{r.cumCreated},{r.cumFixed},{r.backlog}")

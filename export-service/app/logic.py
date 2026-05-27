@@ -6,7 +6,7 @@ import json
 import math
 import re
 from statistics import NormalDist
-from typing import Iterable
+from typing import Callable, Iterable
 from uuid import uuid4
 
 from app.db import get_conn, json_dumps
@@ -1605,7 +1605,7 @@ def _collect_rate_constraints(
                 "milestone": milestone.name,
                 "week": milestone.week,
                 "index": index,
-                "rate": max(1.0, min(100.0, float(rate))),
+                "rate": max(0.0, min(100.0, float(rate))),
                 "metric": metric,
             }
         )
@@ -1796,6 +1796,217 @@ def _distribute_increasing_by_constraints(
         prev_index = end
         prev_cum = target_cum
     return values
+
+
+def _created_lifecycle_weight(index: int, length: int, version_start_index: int) -> float:
+    if length <= 1:
+        return 1.0
+    ratio = index / (length - 1)
+    if ratio < 0.16:
+        weight = 0.72 + 0.42 * (ratio / 0.16)
+    elif ratio < 0.34:
+        weight = 1.14 - 0.12 * ((ratio - 0.16) / 0.18)
+    elif ratio < 0.72:
+        weight = 1.02 + (0.28 - 1.02) * ((ratio - 0.34) / 0.38)
+    else:
+        weight = max(0.03, 0.28 + (0.03 - 0.28) * ((ratio - 0.72) / 0.28))
+    if version_start_index < length and index >= version_start_index:
+        after_version_ratio = (index - version_start_index) / max(1, length - 1 - version_start_index)
+        weight *= max(0.12, 0.38 * (1 - after_version_ratio))
+    return max(0.01, weight)
+
+
+def _distribute_by_cumulative_targets(
+    total: int,
+    length: int,
+    constraints: list[dict[str, object]],
+    weight_for_index: Callable[[int], float],
+) -> list[int]:
+    values = [0 for _ in range(length)]
+    if length <= 0 or total <= 0:
+        return values
+    points_by_index: dict[int, int] = {}
+    for constraint in constraints:
+        idx = max(0, min(length - 1, int(constraint["index"])))
+        target = int(constraint.get("targetCum", round(total * float(constraint["rate"]) / 100)))
+        points_by_index[idx] = max(points_by_index.get(idx, 0), target)
+    points_by_index[length - 1] = total
+
+    prev_index = -1
+    prev_cum = 0
+    for index, cum in sorted(points_by_index.items(), key=lambda item: item[0]):
+        end = min(length - 1, max(prev_index + 1, int(index)))
+        target_cum = max(prev_cum, min(total, int(cum)))
+        amount = target_cum - prev_cum
+        span = list(range(prev_index + 1, end + 1))
+        if not span:
+            prev_index = end
+            prev_cum = target_cum
+            continue
+        weights = [weight_for_index(idx) for idx in span]
+        weight_total = sum(weights) or len(span) or 1
+        rounded = _round_to_total([amount * weight / weight_total for weight in weights], amount)
+        for idx, value in zip(span, rounded):
+            values[idx] = value
+        prev_index = end
+        prev_cum = target_cum
+    return values
+
+
+def _smooth_created_post_peak(values: list[int], peak_index: int) -> list[int]:
+    out = values[:]
+    start = max(1, min(len(out) - 1, int(peak_index) + 1))
+    changed = True
+    passes = 0
+    while changed and passes < 50:
+        changed = False
+        passes += 1
+        for source in range(start, len(out)):
+            guard = 0
+            while source > 0 and out[source] > out[source - 1] and guard < 10000:
+                guard += 1
+                candidates = list(range(source))
+                candidates.sort(key=lambda idx: (out[idx], -idx))
+                if not candidates:
+                    break
+                target = candidates[0]
+                out[source] -= 1
+                out[target] += 1
+                changed = True
+    return out
+
+
+def _backlog_target_shape(
+    total_created: int,
+    length: int,
+    final_backlog: int,
+    fixed_constraints: list[dict[str, object]],
+    created_cum: list[int],
+) -> list[int]:
+    if length <= 0:
+        return []
+    if length == 1:
+        return [max(0, int(final_backlog))]
+    peak_index = max(1, min(length - 1, round((length - 1) / 3)))
+    constraint_backlogs = [
+        max(0, int(created_cum[max(0, min(length - 1, int(constraint["index"])))] - int(constraint.get("targetCum", 0))))
+        for constraint in fixed_constraints
+    ]
+    peak_backlog = max(int(final_backlog), round(total_created * 0.12), 1, *constraint_backlogs)
+    anchors: dict[int, int] = {
+        0: round(peak_backlog * math.sin((math.pi / 2) / (peak_index + 1))),
+        peak_index: peak_backlog,
+        length - 1: max(0, int(final_backlog)),
+    }
+    for constraint in fixed_constraints:
+        idx = max(0, min(length - 1, int(constraint["index"])))
+        required_backlog = max(0, int(created_cum[idx]) - int(constraint.get("targetCum", 0)))
+        anchors[idx] = max(anchors.get(idx, 0), required_backlog)
+    points = sorted([{"index": idx, "backlog": backlog} for idx, backlog in anchors.items()], key=lambda item: int(item["index"]))
+    out = [max(0, int(final_backlog)) for _ in range(length)]
+    for point_index in range(len(points) - 1):
+        start = points[point_index]
+        end = points[point_index + 1]
+        start_idx = int(start["index"])
+        end_idx = int(end["index"])
+        span = max(1, end_idx - start_idx)
+        for idx in range(start_idx, end_idx + 1):
+            ratio = (idx - start_idx) / span
+            smooth = (1 - math.cos(math.pi * ratio)) / 2
+            out[idx] = round(int(start["backlog"]) + (int(end["backlog"]) - int(start["backlog"])) * smooth)
+    return [max(0, min(int(created_cum[idx]) if idx < len(created_cum) else value, value)) for idx, value in enumerate(out)]
+
+
+def _fixed_from_backlog_target(created: list[int], target_backlog: list[int]) -> list[int]:
+    created_cum = _cumulative(created)
+    desired_cum: list[int] = []
+    for idx, _ in enumerate(created):
+        target = max(0, int(target_backlog[idx]) if idx < len(target_backlog) else 0)
+        desired_cum.append(max(0, min(int(created_cum[idx]), round(created_cum[idx] - target))))
+    for idx in range(1, len(desired_cum)):
+        desired_cum[idx] = max(desired_cum[idx], desired_cum[idx - 1])
+    return [value - (desired_cum[idx - 1] if idx > 0 else 0) for idx, value in enumerate(desired_cum)]
+
+
+def _cumulative_slack_from(created: list[int], fixed: list[int], start_index: int) -> int:
+    created_cum = _cumulative(created)
+    fixed_cum = _cumulative(fixed)
+    slack = math.inf
+    for idx in range(start_index, len(created)):
+        slack = min(slack, created_cum[idx] - fixed_cum[idx])
+    return max(0, int(slack if math.isfinite(slack) else 0))
+
+
+def _enforce_fixed_minimum_constraints(
+    fixed: list[int],
+    created: list[int],
+    constraints: list[dict[str, object]],
+) -> tuple[list[int], list[ForecastWarning]]:
+    out = fixed[:]
+    warnings: list[ForecastWarning] = []
+    for constraint in constraints:
+        idx = max(0, min(len(out) - 1, int(constraint["index"])))
+        current_cum = int(sum(out[: idx + 1]))
+        target_cum = max(0, int(constraint.get("targetCum", 0)))
+        deficit = max(0, target_cum - current_cum)
+        guard = 0
+        while deficit > 0 and guard < 100000:
+            guard += 1
+            candidates = [
+                candidate
+                for candidate in range(idx + 1)
+                if _cumulative_slack_from(created, out, candidate) > 0
+            ]
+            candidates.sort(key=lambda candidate: (out[candidate], -candidate))
+            if not candidates:
+                break
+            target = candidates[0]
+            out[target] += 1
+            deficit -= 1
+            current_cum += 1
+        if deficit > 0:
+            warnings.append(
+                ForecastWarning(
+                    type="milestone_conflict",
+                    severity="warning",
+                    milestone=str(constraint["milestone"]),
+                    metric=constraint["metric"],  # type: ignore[arg-type]
+                    currentRate=float(constraint["rate"]),
+                    suggestedRate=round(current_cum / max(1, target_cum) * float(constraint["rate"])),
+                    currentWeek=str(constraint["week"]),
+                    message=f"{constraint['milestone']} 的开发解决率 {float(constraint['rate']):g}% 与 created 可用量冲突，已尽量补足到 {current_cum}/{target_cum}。",
+                )
+            )
+    return out, warnings
+
+
+def _hard_constraint_warnings(
+    weekly: list[WeeklyPoint],
+    constraints: list[dict[str, object]],
+    metric: str,
+    total_created: int,
+) -> list[ForecastWarning]:
+    out: list[ForecastWarning] = []
+    for constraint in constraints:
+        idx = max(0, min(len(weekly) - 1, int(constraint["index"])))
+        row = weekly[idx]
+        actual = row.cumCreated if metric == "testSubmissionRate" else row.cumFixed
+        target = int(constraint.get("targetCum", round(total_created * float(constraint["rate"]) / 100)))
+        if actual >= target:
+            continue
+        out.append(
+            ForecastWarning(
+                type="milestone_conflict",
+                severity="warning",
+                milestone=str(constraint["milestone"]),
+                metric=metric,  # type: ignore[arg-type]
+                currentRate=float(constraint["rate"]),
+                suggestedRate=round(actual / max(1, target) * float(constraint["rate"])),
+                currentWeek=str(constraint["week"]),
+                message=f"{constraint['milestone']} 的{'测试提交率' if metric == 'testSubmissionRate' else '开发解决率'}未达硬指标：{actual}/{target}。",
+            )
+        )
+    return out
 
 
 def _move_total(values: list[int], from_indexes: list[int], to_indexes: list[int], amount: int, min_values: list[int] | None = None) -> int:
@@ -2113,8 +2324,16 @@ def _build_forecast_weekly_distribution(
 ) -> tuple[list[WeeklyPoint], list[ForecastWarning]]:
     target = max(0, round(total_defects))
     created_constraints = _collect_rate_constraints(base_weekly, milestones, "testSubmissionRate", target_mode)
-    tail_start_index = _infer_tail_start_index(base_weekly, milestones)
-    created = _distribute_increasing_by_constraints(target, len(base_weekly), created_constraints)
+    version_start_index = _infer_version_start_index(base_weekly, milestones)
+    created = _smooth_created_post_peak(
+        _distribute_by_cumulative_targets(
+            target,
+            len(base_weekly),
+            created_constraints,
+            lambda idx: _created_lifecycle_weight(idx, len(base_weekly), version_start_index),
+        ),
+        round((len(base_weekly) - 1) / 3),
+    )
     fixed_constraints = _collect_rate_constraints(base_weekly, milestones, "devResolutionRate", target_mode)
     created_cum = _cumulative(created)
     fixed_constraints_by_created = [
@@ -2124,53 +2343,16 @@ def _build_forecast_weekly_distribution(
         }
         for constraint in fixed_constraints
     ]
-    fixed_weights = [
-        (created[idx - 1] if idx > 0 else 0) + (created[idx - 2] if idx > 1 else 0) * 0.8 + 1
-        for idx in range(len(created))
-    ]
     last_fixed_constraint = fixed_constraints[-1] if fixed_constraints else None
     final_backlog = 0 if last_fixed_constraint and float(last_fixed_constraint["rate"]) >= 100 else _final_backlog_target(target)
-    default_fixed_total = max(0, int(target) - int(final_backlog))
-    fixed_total = min(
-        int(target),
-        max(
-            [default_fixed_total]
-            + [int(constraint.get("targetCum", 0)) for constraint in fixed_constraints_by_created]
-        ),
-    )
-    reserve = _backlog_reserve_shape(target, len(base_weekly), tail_start_index, final_backlog)
-    if tail_start_index >= 0 and reserve:
-        for i in range(tail_start_index, len(fixed_weights)):
-            reserve_pressure = 1.0 + max(0, int(reserve[tail_start_index]) - int(reserve[i])) / max(1, int(target))
-            fixed_weights[i] *= reserve_pressure
-    cap_warnings: list[ForecastWarning] = []
-    fixed_avail = _enforce_fixed_availability(
-        _distribute_increasing_by_constraints(
-            fixed_total,
-            len(base_weekly),
-            fixed_constraints_by_created,
-            created_cum,
-            cap_warnings,
-            fixed_weights,
-        ),
+    backlog_target = _backlog_target_shape(target, len(base_weekly), final_backlog, fixed_constraints_by_created, created_cum)
+    fixed_initial = _enforce_fixed_availability(_fixed_from_backlog_target(created, backlog_target), created)
+    fixed_enforced, constraint_warnings = _enforce_fixed_minimum_constraints(
+        fixed_initial,
         created,
+        fixed_constraints_by_created,
     )
-    tail_reserve = _tail_reserve_from_actual_backlog(created, fixed_avail, tail_start_index, final_backlog)
-    fixed = _smooth_tail_fixed_spikes(
-        _enforce_tail_backlog_non_increasing(
-            _front_load_fixed(
-                fixed_avail,
-                created,
-                tail_reserve,
-                tail_start_index,
-            ),
-            created,
-            tail_start_index,
-        ),
-        created,
-        tail_start_index,
-    )
-    fixed = _smooth_convergence_boundary_fixed_spike(fixed, created, tail_start_index, window=2)
+    fixed = _enforce_fixed_availability(fixed_enforced, created)
     weekly: list[WeeklyPoint] = []
     cum_created = 0
     cum_fixed = 0
@@ -2189,7 +2371,11 @@ def _build_forecast_weekly_distribution(
                 backlog=cum_created - cum_fixed,
             )
         )
-    return weekly, cap_warnings
+    warnings: list[ForecastWarning] = []
+    warnings.extend(constraint_warnings)
+    warnings.extend(_hard_constraint_warnings(weekly, created_constraints, "testSubmissionRate", target))
+    warnings.extend(_hard_constraint_warnings(weekly, fixed_constraints_by_created, "devResolutionRate", target))
+    return weekly, warnings
 
 
 def _team_aliases(team: object) -> list[str]:
