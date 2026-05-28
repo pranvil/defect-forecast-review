@@ -6,6 +6,7 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   ResponsiveContainer,
@@ -110,6 +111,39 @@ function AdjustableInput({ value, onChange, className }: { value: number, onChan
         }
       }}
       onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
+function AdjustablePercentInput({ value, onChange, className }: { value: number, onChange: (val: number) => void, className?: string }) {
+  const [local, setLocal] = React.useState<string>(String(Number.isFinite(value) ? Number(value.toFixed(1)) : 0))
+
+  React.useEffect(() => {
+    setLocal(String(Number.isFinite(value) ? Number(value.toFixed(1)) : 0))
+  }, [value])
+
+  return (
+    <Input
+      type="number"
+      min={0}
+      max={100}
+      step={0.1}
+      className={className}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => {
+        const val = Number(local)
+        if (Number.isFinite(val) && val >= 0) {
+          onChange(Math.min(100, val))
+        } else {
+          setLocal(String(Number.isFinite(value) ? Number(value.toFixed(1)) : 0))
+        }
+      }}
+      onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.currentTarget.blur()
         }
@@ -300,7 +334,6 @@ export function ParamsPage() {
   const setParams = useForecastStore((s) => s.setParams)
   const openProjectDetail = useProjectStore((s) => s.openProjectDetail)
   const teams = useTeamStore((s) => s.teams)
-  const updateTeam = useTeamStore((s) => s.updateTeam)
   const hydrateTeamsFromServer = useTeamStore((s) => s.hydrateFromServer)
 
   const testingTeams = React.useMemo(() => teams.filter((x) => x.type === 'testing'), [teams])
@@ -419,6 +452,9 @@ export function ParamsPage() {
     similarity: 75,
     source: '手工添加',
   })
+  const [isTeamRatioOpen, setIsTeamRatioOpen] = React.useState(false)
+  const [teamRatioDraft, setTeamRatioDraft] = React.useState<Record<string, string>>({})
+  const [teamRatioError, setTeamRatioError] = React.useState('')
   const [forecastResult, setForecastResult] = React.useState<ForecastResult | null>(null)
   const [originalDataset, setOriginalDataset] = React.useState<ForecastDataset | null>(null)
   const [forecastError, setForecastError] = React.useState('')
@@ -434,12 +470,6 @@ export function ParamsPage() {
     () => (teamSelection.development.length ? teamSelection.development : devTeams.map((t) => t.name)),
     [devTeams, teamSelection.development],
   )
-
-  const updateTeamForecastRatio = React.useCallback((teamId: string, raw: string) => {
-    const team = useTeamStore.getState().teams.find((row) => row.id === teamId)
-    if (!team) return
-    updateTeam({ ...team, forecastRatio: optionalRateFromForm(raw) ?? null })
-  }, [updateTeam])
 
   const forecastInput = React.useMemo(
     () => ({
@@ -555,6 +585,102 @@ export function ParamsPage() {
       milestones: currentMilestoneLabels.length ? currentMilestoneLabels : forecastResult.dataset.milestones,
     }
   }, [forecastResult, milestones])
+  const forecastCreatedTeamTotal = React.useMemo(
+    () => forecastDataset?.createdTeams.reduce((sum, row) => sum + row.values.reduce((rowSum, value) => rowSum + value, 0), 0) ?? 0,
+    [forecastDataset],
+  )
+  const forecastFixedTeamTotal = React.useMemo(
+    () => forecastDataset?.fixedTeams.reduce((sum, row) => sum + row.values.reduce((rowSum, value) => rowSum + value, 0), 0) ?? 0,
+    [forecastDataset],
+  )
+  const teamTotalPercentFromDataset = React.useCallback(
+    (teamName: string, kind: 'testing' | 'development') => {
+      const rows = kind === 'testing' ? forecastDataset?.createdTeams : forecastDataset?.fixedTeams
+      if (!rows?.length) return null
+      const denominator = rows.reduce((sum, row) => sum + row.values.reduce((rowSum, value) => rowSum + value, 0), 0)
+      if (denominator <= 0) return null
+      const row = rows.find((item) => item.team === teamName)
+      if (!row) return null
+      return (row.values.reduce((sum, value) => sum + value, 0) / denominator) * 100
+    },
+    [forecastDataset],
+  )
+  const displayTeamRatio = React.useCallback(
+    (teamName: string, ratio: number | null | undefined, kind: 'testing' | 'development') => {
+      if (typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0) return `${Number(ratio.toFixed(1))}%`
+      const forecastPercent = teamTotalPercentFromDataset(teamName, kind)
+      return forecastPercent == null ? '自动' : `${Number(forecastPercent.toFixed(1))}%`
+    },
+    [teamTotalPercentFromDataset],
+  )
+  const openTeamRatioDialog = React.useCallback(() => {
+    const next: Record<string, string> = {}
+    const seed = (teams: typeof testingTeams, enabledNames: string[], kind: 'testing' | 'development') => {
+      teams
+        .filter((team) => enabledNames.includes(team.name))
+        .forEach((team) => {
+          const fromForecast = teamTotalPercentFromDataset(team.name, kind)
+          const value = fromForecast ?? team.forecastRatio
+          next[team.id] = typeof value === 'number' && Number.isFinite(value) && value > 0 ? String(Number(value.toFixed(1))) : ''
+        })
+    }
+    seed(testingTeams, enabledTestingTeams, 'testing')
+    seed(devTeams, enabledDevTeams, 'development')
+    setTeamRatioDraft(next)
+    setTeamRatioError('')
+    setIsTeamRatioOpen(true)
+  }, [devTeams, enabledDevTeams, enabledTestingTeams, teamTotalPercentFromDataset, testingTeams])
+
+  const teamRatioSum = React.useCallback(
+    (teams: typeof testingTeams, enabledNames: string[]) =>
+      teams
+        .filter((team) => enabledNames.includes(team.name))
+        .reduce((sum, team) => {
+          const value = Number(teamRatioDraft[team.id] || 0)
+          return sum + (Number.isFinite(value) ? value : 0)
+        }, 0),
+    [teamRatioDraft],
+  )
+
+  const teamRatioTouched = React.useCallback(
+    (teams: typeof testingTeams, enabledNames: string[]) =>
+      teams
+        .filter((team) => enabledNames.includes(team.name))
+        .some((team) => String(teamRatioDraft[team.id] ?? '').trim() !== ''),
+    [teamRatioDraft],
+  )
+
+  const saveTeamRatioDraft = React.useCallback(() => {
+    const testingSum = teamRatioSum(testingTeams, enabledTestingTeams)
+    const devSum = teamRatioSum(devTeams, enabledDevTeams)
+    const testingTouched = teamRatioTouched(testingTeams, enabledTestingTeams)
+    const devTouched = teamRatioTouched(devTeams, enabledDevTeams)
+    const invalid = (value: number) => Math.abs(value - 100) > 0.05
+    if (testingTouched && invalid(testingSum)) {
+      setTeamRatioError(`测试团队占比合计必须为 100%，当前为 ${Number(testingSum.toFixed(1))}%`)
+      return
+    }
+    if (devTouched && invalid(devSum)) {
+      setTeamRatioError(`开发团队占比合计必须为 100%，当前为 ${Number(devSum.toFixed(1))}%`)
+      return
+    }
+    const testingActiveIds = new Set(testingTeams.filter((team) => enabledTestingTeams.includes(team.name)).map((team) => team.id))
+    const devActiveIds = new Set(devTeams.filter((team) => enabledDevTeams.includes(team.name)).map((team) => team.id))
+    const nextTeams = useTeamStore.getState().teams.map((team) => {
+      const isTestingActive = testingActiveIds.has(team.id)
+      const isDevActive = devActiveIds.has(team.id)
+      if (!isTestingActive && !isDevActive) return team
+      if ((isTestingActive && !testingTouched) || (isDevActive && !devTouched)) {
+        return { ...team, forecastRatio: null }
+      }
+      const value = Number(teamRatioDraft[team.id] || 0)
+      return { ...team, forecastRatio: Number.isFinite(value) && value > 0 ? value : null }
+    })
+    useTeamStore.getState().setTeams(nextTeams)
+    setIsTeamRatioOpen(false)
+    setTeamRatioError('')
+    toast('已指定团队比例', { description: '下次预测将按手动比例拆分团队数量' })
+  }, [devTeams, enabledDevTeams, enabledTestingTeams, teamRatioDraft, teamRatioSum, teamRatioTouched, testingTeams])
   const forecastFinalRow = forecastDataset?.weekly.at(-1)
   const forecastEstimatedDefects = forecastResult
     ? forecastResult.estimatedDefects ?? forecastFinalRow?.cumCreated ?? 0
@@ -1068,7 +1194,7 @@ export function ParamsPage() {
           </div>
       </div>
 
-      <div className={`grid grid-cols-1 items-stretch gap-6 xl:grid-cols-3 xl:auto-rows-fr ${forecastResult ? 'order-last' : ''}`}>
+      <div className={`grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(460px,1fr)] xl:auto-rows-fr ${forecastResult ? 'order-last' : ''}`}>
         <Card className="h-full rounded-2xl">
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1153,85 +1279,83 @@ export function ParamsPage() {
 
         <Card className="h-full rounded-2xl">
           <CardHeader>
-            <CardTitle>测试团队拆分</CardTitle>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle>开发/测试拆分</CardTitle>
+                <CardDescription>不指定比例时，预测会按参考项目历史占比分配</CardDescription>
+              </div>
+              <Button type="button" variant="outline" className="rounded-2xl" onClick={openTeamRatioDialog}>
+                指定比例
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[300px] rounded-xl border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>启用</TableHead>
-                    <TableHead>聚合团队</TableHead>
-                    <TableHead className="w-[116px]">预估占比(%)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {testingTeams.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={teamSelection.testing.includes(t.name)}
-                          onCheckedChange={(checked) =>
-                            toggleSelectedTeam('testing', t.name, checked === true)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{t.name}</TableCell>
-                      <TableCell>
-                        <Input
-                          value={formatRateInput(t.forecastRatio)}
-                          className="h-8 min-w-[96px] rounded-lg px-2"
-                          placeholder="自动"
-                          onChange={(e) => updateTeamForecastRatio(t.id, e.target.value)}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        <Card className="h-full rounded-2xl">
-          <CardHeader>
-            <CardTitle>开发团队拆分</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[300px] rounded-xl border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>启用</TableHead>
-                    <TableHead>聚合团队</TableHead>
-                    <TableHead className="w-[116px]">预估占比(%)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {devTeams.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={teamSelection.development.includes(t.name)}
-                          onCheckedChange={(checked) =>
-                            toggleSelectedTeam('development', t.name, checked === true)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{t.name}</TableCell>
-                      <TableCell>
-                        <Input
-                          value={formatRateInput(t.forecastRatio)}
-                          className="h-8 min-w-[96px] rounded-lg px-2"
-                          placeholder="自动"
-                          onChange={(e) => updateTeamForecastRatio(t.id, e.target.value)}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </ScrollArea>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-700">测试团队</div>
+                <ScrollArea className="h-[300px] rounded-xl border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>启用</TableHead>
+                        <TableHead>团队</TableHead>
+                        <TableHead className="text-right">占比</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {testingTeams.map((t) => (
+                        <TableRow key={t.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={teamSelection.testing.includes(t.name)}
+                              onCheckedChange={(checked) =>
+                                toggleSelectedTeam('testing', t.name, checked === true)
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{t.name}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {displayTeamRatio(t.name, t.forecastRatio, 'testing')}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              </div>
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-700">开发团队</div>
+                <ScrollArea className="h-[300px] rounded-xl border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>启用</TableHead>
+                        <TableHead>团队</TableHead>
+                        <TableHead className="text-right">占比</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {devTeams.map((t) => (
+                        <TableRow key={t.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={teamSelection.development.includes(t.name)}
+                              onCheckedChange={(checked) =>
+                                toggleSelectedTeam('development', t.name, checked === true)
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{t.name}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {displayTeamRatio(t.name, t.forecastRatio, 'development')}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -1583,7 +1707,17 @@ export function ParamsPage() {
                       <Legend />
                       <Area type="monotone" dataKey="created" name="Arrive_forecast" stroke="#0284c7" fill="#7dd3fc" fillOpacity={0.25} strokeWidth={2} />
                       <Area type="monotone" dataKey="fixed" name="Resolve plan" stroke="#16a34a" fill="#86efac" fillOpacity={0.2} strokeWidth={2} />
-                      <Line type="monotone" dataKey="backlog" name="Backlog_plan" stroke="#0f172a" strokeWidth={2.5} dot={false} />
+                      <Line
+                        type="linear"
+                        dataKey="backlog"
+                        name="Backlog_plan"
+                        stroke="#0f172a"
+                        strokeWidth={2.5}
+                        dot={{ r: 4, strokeWidth: 2, fill: '#fff' }}
+                        activeDot={{ r: 6 }}
+                      >
+                        <LabelList dataKey="backlog" position="top" fontSize={11} fill="#334155" />
+                      </Line>
                     </ComposedChart>
                   </ResponsiveContainer>
                 </TabsContent>
@@ -1597,7 +1731,17 @@ export function ParamsPage() {
                       <Legend />
                       <Bar dataKey="created" name="Arrive_forecast" fill="#0284c7" />
                       <Bar dataKey="fixed" name="Resolve plan" fill="#eab308" />
-                      <Line type="monotone" dataKey="backlog" name="Backlog_plan" stroke="#0ea5e9" strokeWidth={2.5} dot={false} />
+                      <Line
+                        type="linear"
+                        dataKey="backlog"
+                        name="Backlog_plan"
+                        stroke="#0ea5e9"
+                        strokeWidth={2.5}
+                        dot={{ r: 4, strokeWidth: 2, fill: '#fff' }}
+                        activeDot={{ r: 6 }}
+                      >
+                        <LabelList dataKey="backlog" position="top" fontSize={11} fill="#334155" />
+                      </Line>
                     </ComposedChart>
                   </ResponsiveContainer>
                 </TabsContent>
@@ -1673,28 +1817,52 @@ export function ParamsPage() {
                         <TableRow>
                           <TableHead>聚合团队</TableHead>
                           <TableHead>预测 Created</TableHead>
+                          <TableHead>占比(%)</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {forecastDataset.createdTeams.map((row) => (
-                          <TableRow key={row.team}>
-                            <TableCell className="font-medium">{row.team}</TableCell>
-                            <TableCell>
-                              <AdjustableInput
-                                className="w-24"
-                                value={row.values.reduce((sum, value) => sum + value, 0)}
-                                onChange={(val) => {
-                                  if (forecastResult) {
-                                    setForecastResult({
-                                      ...forecastResult,
-                                      dataset: adjustTeamTotal(forecastDataset, row.team, val, 'created'),
-                                    })
-                                  }
-                                }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {forecastDataset.createdTeams.map((row) => {
+                          const total = row.values.reduce((sum, value) => sum + value, 0)
+                          const percent = forecastCreatedTeamTotal > 0 ? (total / forecastCreatedTeamTotal) * 100 : 0
+                          return (
+                            <TableRow key={row.team}>
+                              <TableCell className="font-medium">{row.team}</TableCell>
+                              <TableCell>
+                                <AdjustableInput
+                                  className="w-24"
+                                  value={total}
+                                  onChange={(val) => {
+                                    if (forecastResult) {
+                                      setForecastResult({
+                                        ...forecastResult,
+                                        dataset: adjustTeamTotal(forecastDataset, row.team, val, 'created'),
+                                      })
+                                    }
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <AdjustablePercentInput
+                                  className="w-24"
+                                  value={percent}
+                                  onChange={(val) => {
+                                    if (forecastResult) {
+                                      setForecastResult({
+                                        ...forecastResult,
+                                        dataset: adjustTeamTotal(
+                                          forecastDataset,
+                                          row.team,
+                                          Math.round((forecastCreatedTeamTotal * val) / 100),
+                                          'created',
+                                        ),
+                                      })
+                                    }
+                                  }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </CardContent>
@@ -1710,28 +1878,52 @@ export function ParamsPage() {
                         <TableRow>
                           <TableHead>聚合团队</TableHead>
                           <TableHead>预测 Fixed</TableHead>
+                          <TableHead>占比(%)</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {forecastDataset.fixedTeams.map((row) => (
-                          <TableRow key={row.team}>
-                            <TableCell className="font-medium">{row.team}</TableCell>
-                            <TableCell>
-                              <AdjustableInput
-                                className="w-24"
-                                value={row.values.reduce((sum, value) => sum + value, 0)}
-                                onChange={(val) => {
-                                  if (forecastResult) {
-                                    setForecastResult({
-                                      ...forecastResult,
-                                      dataset: adjustTeamTotal(forecastDataset, row.team, val, 'fixed'),
-                                    })
-                                  }
-                                }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {forecastDataset.fixedTeams.map((row) => {
+                          const total = row.values.reduce((sum, value) => sum + value, 0)
+                          const percent = forecastFixedTeamTotal > 0 ? (total / forecastFixedTeamTotal) * 100 : 0
+                          return (
+                            <TableRow key={row.team}>
+                              <TableCell className="font-medium">{row.team}</TableCell>
+                              <TableCell>
+                                <AdjustableInput
+                                  className="w-24"
+                                  value={total}
+                                  onChange={(val) => {
+                                    if (forecastResult) {
+                                      setForecastResult({
+                                        ...forecastResult,
+                                        dataset: adjustTeamTotal(forecastDataset, row.team, val, 'fixed'),
+                                      })
+                                    }
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <AdjustablePercentInput
+                                  className="w-24"
+                                  value={percent}
+                                  onChange={(val) => {
+                                    if (forecastResult) {
+                                      setForecastResult({
+                                        ...forecastResult,
+                                        dataset: adjustTeamTotal(
+                                          forecastDataset,
+                                          row.team,
+                                          Math.round((forecastFixedTeamTotal * val) / 100),
+                                          'fixed',
+                                        ),
+                                      })
+                                    }
+                                  }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </CardContent>
@@ -1765,6 +1957,105 @@ export function ParamsPage() {
         </div>
       )}
 
+      <Dialog open={isTeamRatioOpen} onOpenChange={setIsTeamRatioOpen}>
+        <DialogContent className="sm:max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle>指定团队 Bug 占比</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>测试团队</Label>
+                <span className={`text-sm tabular-nums ${!teamRatioTouched(testingTeams, enabledTestingTeams) ? 'text-slate-500' : Math.abs(teamRatioSum(testingTeams, enabledTestingTeams) - 100) <= 0.05 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                  {teamRatioTouched(testingTeams, enabledTestingTeams)
+                    ? `合计 ${Number(teamRatioSum(testingTeams, enabledTestingTeams).toFixed(1))}%`
+                    : '未指定（自动）'}
+                </span>
+              </div>
+              <ScrollArea className="h-[320px] rounded-xl border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>团队</TableHead>
+                      <TableHead className="w-[120px]">占比(%)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {testingTeams.filter((team) => enabledTestingTeams.includes(team.name)).map((team) => (
+                      <TableRow key={team.id}>
+                        <TableCell className="font-medium">{team.name}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            className="h-8 rounded-lg px-2"
+                            value={teamRatioDraft[team.id] ?? ''}
+                            onChange={(e) => setTeamRatioDraft((current) => ({ ...current, [team.id]: e.target.value }))}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>开发团队</Label>
+                <span className={`text-sm tabular-nums ${!teamRatioTouched(devTeams, enabledDevTeams) ? 'text-slate-500' : Math.abs(teamRatioSum(devTeams, enabledDevTeams) - 100) <= 0.05 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                  {teamRatioTouched(devTeams, enabledDevTeams)
+                    ? `合计 ${Number(teamRatioSum(devTeams, enabledDevTeams).toFixed(1))}%`
+                    : '未指定（自动）'}
+                </span>
+              </div>
+              <ScrollArea className="h-[320px] rounded-xl border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>团队</TableHead>
+                      <TableHead className="w-[120px]">占比(%)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {devTeams.filter((team) => enabledDevTeams.includes(team.name)).map((team) => (
+                      <TableRow key={team.id}>
+                        <TableCell className="font-medium">{team.name}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            className="h-8 rounded-lg px-2"
+                            value={teamRatioDraft[team.id] ?? ''}
+                            onChange={(e) => setTeamRatioDraft((current) => ({ ...current, [team.id]: e.target.value }))}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+          </div>
+          {teamRatioError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {teamRatioError}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" className="rounded-2xl" onClick={() => setIsTeamRatioOpen(false)}>
+              取消
+            </Button>
+            <Button type="button" className="rounded-2xl" onClick={saveTeamRatioDraft}>
+              确定
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isAddRefOpen} onOpenChange={setIsAddRefOpen}>
         <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
@@ -1793,15 +2084,6 @@ export function ParamsPage() {
                 }
               />
             </div>
-            <div className="space-y-2">
-              <Label>来源</Label>
-              <Input
-                value={refDraft.source}
-                onChange={(e) =>
-                  setRefDraft((s) => ({ ...s, source: e.target.value }))
-                }
-              />
-            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1822,7 +2104,7 @@ export function ParamsPage() {
                   similarity: Number.isFinite(refDraft.similarity)
                     ? refDraft.similarity
                     : 0,
-                  source: refDraft.source || '手工添加',
+                  source: '手工添加',
                 })
                 setRefDraft({ project: '', similarity: 75, source: '手工添加' })
                 setIsAddRefOpen(false)
@@ -2191,15 +2473,6 @@ export function ParamsPage() {
                 }
               />
             </div>
-            <div className="space-y-2">
-              <Label>来源</Label>
-              <Input
-                value={refEditDraft.source}
-                onChange={(e) =>
-                  setRefEditDraft((s) => ({ ...s, source: e.target.value }))
-                }
-              />
-            </div>
           </div>
           <DialogFooter>
             <Button
@@ -2223,7 +2496,7 @@ export function ParamsPage() {
                   similarity: Number.isFinite(refEditDraft.similarity)
                     ? refEditDraft.similarity
                     : 0,
-                  source: refEditDraft.source || '手工添加',
+                  source: '手工添加',
                 })
                 setIsReplaceRefOpen(false)
                 setRefEditingProjectKey(null)

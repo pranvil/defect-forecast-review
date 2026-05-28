@@ -21,6 +21,7 @@ import argparse
 import math
 import re
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Callable, List, Optional, Tuple
 
 
@@ -137,6 +138,23 @@ def cumulative(values: List[int]) -> List[int]:
         total += int(v)
         out.append(total)
     return out
+
+
+def is_fixed_holiday(day: date) -> bool:
+    return (day.month == 5 and 1 <= day.day <= 5) or (day.month == 10 and 1 <= day.day <= 7)
+
+
+def workday_ratio_for_week(week_label: str) -> float:
+    year, week = parse_week_label(week_label)
+    try:
+        start = date.fromisocalendar(year, week, 1)
+    except ValueError:
+        return 1.0
+    workdays = 0
+    for offset in range(5):
+        if not is_fixed_holiday(start + timedelta(days=offset)):
+            workdays += 1
+    return 0.02 if workdays <= 0 else workdays / 5
 
 
 def collect_constraints(
@@ -315,6 +333,17 @@ def created_lifecycle_weight(index: int, length: int, version_start_index: int) 
         after_version_ratio = (index - version_start_index) / max(1, length - 1 - version_start_index)
         weight *= max(0.12, 0.38 * (1 - after_version_ratio))
     return max(0.01, weight)
+
+
+def fixed_lifecycle_weight(index: int, length: int) -> float:
+    if length <= 1:
+        return 1.0
+    ratio = index / (length - 1)
+    if ratio < 0.2:
+        return 0.55 + 0.45 * (ratio / 0.2)
+    if ratio < 0.75:
+        return 1.08
+    return 1.08 + (0.72 - 1.08) * ((ratio - 0.75) / 0.25)
 
 
 def distribute_by_cumulative_targets(
@@ -756,12 +785,13 @@ def build_distribution(
 
     created_constraints = collect_constraints(base_weekly, milestones, "testSubmissionRate", target_mode)
     version_start = infer_version_start_index(base_weekly, milestones)
+    holiday_weights = [workday_ratio_for_week(row.weekLabel) for row in base_weekly]
     created = smooth_created_post_peak(
         distribute_by_cumulative_targets(
             total,
             len(base_weekly),
             created_constraints,
-            lambda idx: created_lifecycle_weight(idx, len(base_weekly), version_start),
+            lambda idx: created_lifecycle_weight(idx, len(base_weekly), version_start) * holiday_weights[idx],
         ),
         round((len(base_weekly) - 1) / 3),
     )
@@ -776,8 +806,19 @@ def build_distribution(
 
     last_fixed_constraint = fixed_constraints[-1] if fixed_constraints else None
     final_backlog = 0 if last_fixed_constraint and float(last_fixed_constraint["rate"]) >= 100 else final_backlog_target(total)
-    backlog_target = backlog_target_shape(total, len(base_weekly), final_backlog, fixed_constraints_by_created, created_cum)
-    fixed_initial = enforce_fixed_availability(fixed_from_backlog_target(created, backlog_target), created)
+    fixed_target_total = max(
+        min(total, total - final_backlog),
+        max([0] + [int(c.get("targetCum", 0)) for c in fixed_constraints_by_created]),
+    )
+    fixed_initial = enforce_fixed_availability(
+        distribute_by_cumulative_targets(
+            fixed_target_total,
+            len(base_weekly),
+            fixed_constraints_by_created,
+            lambda idx: fixed_lifecycle_weight(idx, len(base_weekly)) * holiday_weights[idx],
+        ),
+        created,
+    )
     fixed = enforce_fixed_availability(
         enforce_fixed_minimum_constraints(fixed_initial, created, fixed_constraints_by_created),
         created,

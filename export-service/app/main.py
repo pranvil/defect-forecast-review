@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -78,14 +79,22 @@ from app.logging_utils import configure_logging
 app = FastAPI(title="DRP Export Service", version="0.1.0")
 logger = logging.getLogger("drp.api")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("DRP_CORS_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+    return [
         "http://localhost:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
-    ],
+    ]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -448,11 +457,14 @@ def web_root():
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def web_spa_fallback(full_path: str):
-    if full_path.startswith("api/"):
+    if full_path == "api" or full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
 
     if WEB_DIST_DIR.exists():
-        candidate = WEB_DIST_DIR / full_path
+        candidate = (WEB_DIST_DIR / full_path).resolve()
+        root = WEB_DIST_DIR.resolve()
+        if root not in candidate.parents and candidate != root:
+            raise HTTPException(status_code=404, detail="Not found")
         if candidate.exists() and candidate.is_file():
             return FileResponse(str(candidate))
         if WEB_DIST_INDEX.exists():

@@ -731,8 +731,7 @@ export function useHistoryPageData() {
           return true
         })
         const includeList = aliases.map((a) => `"${escapeJqlValue(a)}"`).join(', ')
-        if (!includeList) return `${field} is EMPTY AND ${field} is not EMPTY`
-        const clauses = [`${field} in (${includeList})`]
+        const clauses = includeList ? [`${field} in (${includeList})`] : []
         if (isTesting && team === SPECIAL_GOOGLE_XTS_TEAM) {
           clauses.push(`(reporter = "${escapeJqlValue(SPECIAL_GOOGLE_XTS_REPORTER)}" AND component in (${componentList}))`)
         }
@@ -743,6 +742,7 @@ export function useHistoryPageData() {
           const reporterList = SPECIAL_HERA_REPORTERS.map((reporter) => `"${escapeJqlValue(reporter)}"`).join(', ')
           clauses.push(`reporter in (${reporterList})`)
         }
+        if (!clauses.length) return `${field} is EMPTY AND ${field} is not EMPTY`
         return clauses.length === 1 ? clauses[0] : `(${clauses.join(' OR ')})`
       }
 

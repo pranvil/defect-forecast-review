@@ -51,11 +51,18 @@ export const fixedTestingTeams: TeamItem[] = [
     note: '软件质量保障二中心-系统质量二部-质效自动化组，测试未知团队-swtc_devops',
   },
   {
+    id: 'testing-iut',
+    name: 'IUT',
+    type: 'testing',
+    enabled: true,
+    note: 'MP BU-Q&CC-PQ&NPS，MP PL-PQ-QPM Team，MP PL-Q&CC-PQ&NPS，MP BU-Q&CC-QAD',
+  },
+  {
     id: 'testing-hera-user-apruut',
     name: 'Hera/Usersupport/APRUUT',
     type: 'testing',
     enabled: true,
-    note: 'MP PL-PQ-QPM Team，MP PL-Q&CC-PQ&NPS，MP BU-Q&CC-PQ&NPS，测试未知团队-usersupport，测试未知团队-devops.tms',
+    note: '测试未知团队-usersupport，测试未知团队-devops.tms',
   },
 ]
 

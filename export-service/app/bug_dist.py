@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 from collections import Counter
 from dataclasses import dataclass
@@ -41,6 +42,18 @@ def _cache_dir() -> Path:
     path = DEFAULT_DATA_DIR / BUG_DIST_CACHE_DIRNAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _task_status_dir() -> Path:
+    path = _cache_dir() / "tasks"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _task_status_path(task_id: str) -> Path:
+    normalized = task_id.strip()
+    safe_name = normalized if re.fullmatch(r"[0-9a-fA-F]{32}", normalized) else _hash_key(normalized)
+    return _task_status_dir() / f"{safe_name}.json"
 
 
 def _hash_key(text: str) -> str:
@@ -408,10 +421,51 @@ _TASKS_LOCK = threading.Lock()
 _TASKS: dict[str, _TaskState] = {}
 
 
+def _task_status_from_state(task_id: str, state: _TaskState) -> BugDistTaskStatus:
+    return BugDistTaskStatus(
+        taskId=task_id,
+        status=state.status,
+        progress=state.progress,
+        result=state.result,
+        error=state.error,
+    )
+
+
+def _state_from_task_status(status: BugDistTaskStatus) -> _TaskState:
+    return _TaskState(
+        status=status.status,
+        progress=status.progress,
+        result=status.result,
+        error=status.error,
+    )
+
+
+def _write_task_status(status: BugDistTaskStatus) -> None:
+    path = _task_status_path(status.taskId)
+    try:
+        path.write_text(status.model_dump_json(indent=0, by_alias=True), encoding="utf-8")
+    except Exception as e:
+        logger.warning("bug dist task status write failed, task=%s, path=%s, error=%s", status.taskId, path, repr(e))
+
+
+def _read_task_status(task_id: str) -> BugDistTaskStatus | None:
+    path = _task_status_path(task_id)
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8")
+        return BugDistTaskStatus.model_validate(json.loads(raw) if raw else {})
+    except Exception as e:
+        logger.warning("bug dist task status read failed, task=%s, path=%s, error=%s", task_id, path, repr(e))
+        return None
+
+
 def create_task(req: BugDistCreateTaskRequest) -> str:
     task_id = uuid4().hex
+    state = _TaskState(status="running", progress=BugDistTaskProgress(), result=None, error="")
     with _TASKS_LOCK:
-        _TASKS[task_id] = _TaskState(status="running", progress=BugDistTaskProgress(), result=None, error="")
+        _TASKS[task_id] = state
+    _write_task_status(_task_status_from_state(task_id, state))
     thread = threading.Thread(target=_run_task, args=(task_id, req), daemon=True)
     thread.start()
     return task_id
@@ -420,15 +474,18 @@ def create_task(req: BugDistCreateTaskRequest) -> str:
 def get_task_status(task_id: str) -> BugDistTaskStatus:
     with _TASKS_LOCK:
         state = _TASKS.get(task_id)
-    if not state:
+    if state:
+        return _task_status_from_state(task_id, state)
+    persisted = _read_task_status(task_id)
+    if not persisted:
         return BugDistTaskStatus(taskId=task_id, status="failed", error="任务不存在或已过期")
-    return BugDistTaskStatus(
-        taskId=task_id,
-        status=state.status,
-        progress=state.progress,
-        result=state.result,
-        error=state.error,
-    )
+    if persisted.status == "running":
+        persisted.status = "failed"
+        persisted.error = "服务已重启，运行中的任务已中断，请重新发起"
+        _write_task_status(persisted)
+    with _TASKS_LOCK:
+        _TASKS[task_id] = _state_from_task_status(persisted)
+    return persisted
 
 
 def _set_progress(task_id: str, *, start_at: int, page_size: int, fetched: int, total: int, message: str = "") -> None:
@@ -443,6 +500,8 @@ def _set_progress(task_id: str, *, start_at: int, page_size: int, fetched: int, 
             total=total,
             message=message,
         )
+        status = _task_status_from_state(task_id, state)
+    _write_task_status(status)
 
 
 def _set_done(task_id: str, result: BugDistTaskResult, cached: bool) -> None:
@@ -454,6 +513,8 @@ def _set_done(task_id: str, result: BugDistTaskResult, cached: bool) -> None:
         state.status = "success"
         state.result = result
         state.error = ""
+        status = _task_status_from_state(task_id, state)
+    _write_task_status(status)
 
 
 def _set_failed(task_id: str, error: str) -> None:
@@ -463,6 +524,8 @@ def _set_failed(task_id: str, error: str) -> None:
             return
         state.status = "failed"
         state.error = error
+        status = _task_status_from_state(task_id, state)
+    _write_task_status(status)
 
 
 def _run_task(task_id: str, req: BugDistCreateTaskRequest) -> None:

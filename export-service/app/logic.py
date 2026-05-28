@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import math
 import re
@@ -38,7 +38,13 @@ from app.models import (
 )
 
 DEFAULT_PROJECTS = []
-USER_PROGRAM_TEST_TEAM = "Hera/Usersupport/APRUUT"
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+USER_PROGRAM_TEST_TEAM = "IUT"
 
 SIMILARITY_WEIGHTS = (
     ("projectCategory", 0.25),
@@ -91,7 +97,8 @@ DEFAULT_TEAMS: list[TeamConfigRow] = [
     TeamConfigRow(id="testing-special", name="专项测试组", type="testing", enabled=True, note="软件质量保障二中心-专项与协议测试部-专项自动化组，软件质量保障二中心-专项与协议测试部-运营商专项测试二组，软件质量保障二中心-专项与协议测试部-运营商专项测试一组"),
     TeamConfigRow(id="testing-protocol", name="协议测试组", type="testing", enabled=True, note="软件质量保障二中心-专项与协议测试部-运营商协议测试一组，软件质量保障二中心-专项与协议测试部-运营商协议测试二组"),
     TeamConfigRow(id="testing-pipeline", name="流水线", type="testing", enabled=True, note="软件质量保障二中心-系统质量二部-质效自动化组，测试未知团队-swtc_devops"),
-    TeamConfigRow(id="testing-hera-user-apruut", name="Hera/Usersupport/APRUUT", type="testing", enabled=True, note="MP PL-PQ-QPM Team，MP PL-Q&CC-PQ&NPS，MP BU-Q&CC-PQ&NPS，测试未知团队-usersupport，测试未知团队-devops.tms"),
+    TeamConfigRow(id="testing-iut", name="IUT", type="testing", enabled=True, note="MP BU-Q&CC-PQ&NPS，MP PL-PQ-QPM Team，MP PL-Q&CC-PQ&NPS，MP BU-Q&CC-QAD"),
+    TeamConfigRow(id="testing-hera-user-apruut", name="Hera/Usersupport/APRUUT", type="testing", enabled=True, note="测试未知团队-usersupport，测试未知团队-devops.tms"),
     TeamConfigRow(id="development-protocol", name="协议技术部", type="development", enabled=True, note="移动解决方案中心-协议技术部-协议开发一组，移动解决方案中心-协议技术部-协议开发二组，系统应用开发中心-协议技术部-协议开发一组，移动解决方案二中心-协议技术部-协议开发一组，移动解决方案二中心-协议技术部-协议开发四组，移动解决方案二中心-协议技术部-协议开发二组"),
     TeamConfigRow(id="development-bsp", name="底软技术部", type="development", enabled=True, note="移动解决方案中心-底软技术部-系统开发二组，移动解决方案中心-底软技术部-设备安全组，移动解决方案中心-底软技术部-充电方案组，移动解决方案中心-底软技术部-工业生产组，移动解决方案中心-底软技术部-系统开发一组，移动解决方案中心-底软技术部-系统开发三组，移动解决方案中心-底软技术部-机芯平台组，移动解决方案中心-底软技术部，移动解决方案中心-底软技术部-功耗充电组，移动解决方案一中心-底软技术部-机芯预研组，移动解决方案一中心-底软技术部-设备安全组，移动解决方案一中心-底软技术部-系统开发一组，移动解决方案一中心-底软技术部-功耗充电组，移动解决方案一中心-底软技术部-系统开发二组，移动解决方案一中心-底软技术部-DFX组，移动解决方案一中心-底软技术部-ODC一组"),
     TeamConfigRow(id="development-system", name="系统技术部", type="development", enabled=True, note="移动解决方案中心-系统技术部-交互窗口组，移动解决方案中心-系统技术部-多媒体连接组，移动解决方案中心-系统技术部-框架开发一组，移动解决方案中心-系统技术部-框架开发二组，移动解决方案中心-系统技术部-显示技术组，移动解决方案中心-系统技术部-核心服务组，移动解决方案中心-系统技术部-续航优化组，移动解决方案中心-系统技术部-系统稳定性组，移动解决方案中心-系统技术部，移动解决方案一中心-系统技术部-多媒体连接组，移动解决方案一中心-系统技术部-性能解决方案组，移动解决方案一中心-系统技术部-核心服务组，移动解决方案一中心-系统技术部-框架开发一组，移动解决方案一中心-系统技术部-交互窗口组，移动解决方案一中心-系统技术部-竞争力技术组，移动解决方案一中心-系统技术部-框架开发二组，移动解决方案一中心-系统技术部-系统稳定性组"),
@@ -1082,7 +1089,7 @@ def record_jira_fetch_error(req: JiraFetchRequest, error: str) -> None:
             boundedJql=bounded_query,
             fetchedCount=0,
             writtenCount=0,
-            syncedAt=datetime.utcnow().isoformat(),
+            syncedAt=_utcnow_iso(),
             requestedFields=[],
             sampleIssues=[],
             error=error,
@@ -1437,7 +1444,7 @@ def ensure_seed_data() -> None:
         count = conn.execute("SELECT COUNT(*) AS c FROM project_summary").fetchone()["c"]
         if count > 0:
             return
-        now = datetime.utcnow().isoformat()
+        now = _utcnow_iso()
         for name, cycle, defects, teams, similarity in DEFAULT_PROJECTS:
             conn.execute(
                 """
@@ -1564,6 +1571,7 @@ def delete_cached_project(project_name: str) -> bool:
 
 
 FORECAST_FINAL_BACKLOG_RATIO = 0.002
+EARLY_TEAM_WEEKLY_CAP = 6
 
 
 def _round_to_total(raw: list[float], target_total: int) -> list[int]:
@@ -1656,6 +1664,22 @@ def _cumulative(values: list[int | float]) -> list[float]:
         total += float(value)
         out.append(total)
     return out
+
+
+def _is_fixed_holiday(day: date) -> bool:
+    return (day.month == 5 and 1 <= day.day <= 5) or (day.month == 10 and 1 <= day.day <= 7)
+
+
+def _workday_ratio_for_week(row: WeeklyPoint) -> float:
+    try:
+        start = datetime.strptime(row.date.strip(), "%Y-%m-%d").date()
+    except (ValueError, AttributeError):
+        return 1.0
+    workdays = 0
+    for offset in range(5):
+        if not _is_fixed_holiday(start + timedelta(days=offset)):
+            workdays += 1
+    return 0.02 if workdays <= 0 else workdays / 5
 
 
 def _tail_reserve_from_actual_backlog(
@@ -1814,6 +1838,17 @@ def _created_lifecycle_weight(index: int, length: int, version_start_index: int)
         after_version_ratio = (index - version_start_index) / max(1, length - 1 - version_start_index)
         weight *= max(0.12, 0.38 * (1 - after_version_ratio))
     return max(0.01, weight)
+
+
+def _fixed_lifecycle_weight(index: int, length: int) -> float:
+    if length <= 1:
+        return 1.0
+    ratio = index / (length - 1)
+    if ratio < 0.2:
+        return 0.55 + 0.45 * (ratio / 0.2)
+    if ratio < 0.75:
+        return 1.08
+    return 1.08 + (0.72 - 1.08) * ((ratio - 0.75) / 0.25)
 
 
 def _distribute_by_cumulative_targets(
@@ -2325,12 +2360,13 @@ def _build_forecast_weekly_distribution(
     target = max(0, round(total_defects))
     created_constraints = _collect_rate_constraints(base_weekly, milestones, "testSubmissionRate", target_mode)
     version_start_index = _infer_version_start_index(base_weekly, milestones)
+    holiday_weights = [_workday_ratio_for_week(row) for row in base_weekly]
     created = _smooth_created_post_peak(
         _distribute_by_cumulative_targets(
             target,
             len(base_weekly),
             created_constraints,
-            lambda idx: _created_lifecycle_weight(idx, len(base_weekly), version_start_index),
+            lambda idx: _created_lifecycle_weight(idx, len(base_weekly), version_start_index) * holiday_weights[idx],
         ),
         round((len(base_weekly) - 1) / 3),
     )
@@ -2345,8 +2381,19 @@ def _build_forecast_weekly_distribution(
     ]
     last_fixed_constraint = fixed_constraints[-1] if fixed_constraints else None
     final_backlog = 0 if last_fixed_constraint and float(last_fixed_constraint["rate"]) >= 100 else _final_backlog_target(target)
-    backlog_target = _backlog_target_shape(target, len(base_weekly), final_backlog, fixed_constraints_by_created, created_cum)
-    fixed_initial = _enforce_fixed_availability(_fixed_from_backlog_target(created, backlog_target), created)
+    fixed_target_total = max(
+        min(target, target - final_backlog),
+        max([0] + [int(constraint.get("targetCum", 0)) for constraint in fixed_constraints_by_created]),
+    )
+    fixed_initial = _enforce_fixed_availability(
+        _distribute_by_cumulative_targets(
+            fixed_target_total,
+            len(base_weekly),
+            fixed_constraints_by_created,
+            lambda idx: _fixed_lifecycle_weight(idx, len(base_weekly)) * holiday_weights[idx],
+        ),
+        created,
+    )
     fixed_enforced, constraint_warnings = _enforce_fixed_minimum_constraints(
         fixed_initial,
         created,
@@ -2423,6 +2470,125 @@ def _split_weekly_by_ratios(
     return rows
 
 
+def _normalized_team_name(team: str) -> str:
+    return re.sub(r"\s+", "", team.strip().lower())
+
+
+def _team_gate(team: str, index: int, length: int) -> tuple[float, float]:
+    name = _normalized_team_name(team)
+    ratio = 1.0 if length <= 1 else index / (length - 1)
+    is_protocol = "协议测试组" in team or "protocol" in name
+    is_special = "专项测试组" in team or "special" in name
+    is_iut = name == "iut" or "iut" in name
+    is_google_xts = "googlexts" in name
+    is_hera = "hera/usersupport/apruut" in name or "hera" in name or "apruut" in name
+
+    if is_google_xts and ratio < 1 / 6:
+        return 0.0, 0.0
+    if is_hera and ratio < 0.4:
+        return 0.0, 0.0
+    if is_iut:
+        if ratio < 0.3:
+            return 0.0, 0.0
+        if ratio < 0.5:
+            return 0.08, float(EARLY_TEAM_WEEKLY_CAP)
+        return 1.0, math.inf
+    if is_protocol and ratio < 1 / 6:
+        return 0.08, float(EARLY_TEAM_WEEKLY_CAP)
+    if is_special and ratio < 1 / 3:
+        return 0.08, float(EARLY_TEAM_WEEKLY_CAP)
+    return 1.0, math.inf
+
+
+def _distribute_with_caps(total: int, weights: list[float], caps: list[float]) -> list[int]:
+    weight_total = sum(weights)
+    if total <= 0 or weight_total <= 0:
+        return [0 for _ in weights]
+    values = _round_to_total([total * weight / weight_total for weight in weights], total)
+    overflow = 0
+    for idx, value in enumerate(values):
+        cap = caps[idx] if idx < len(caps) else math.inf
+        if value > cap:
+            overflow += value - int(cap)
+            values[idx] = int(cap)
+    guard = 0
+    while overflow > 0 and guard < 100000:
+        guard += 1
+        candidates = [
+            (idx, values[idx], caps[idx] if idx < len(caps) else math.inf, weights[idx] if idx < len(weights) else 0.0)
+            for idx in range(len(values))
+            if values[idx] < (caps[idx] if idx < len(caps) else math.inf) and (weights[idx] if idx < len(weights) else 0.0) > 0
+        ]
+        candidates.sort(key=lambda item: (item[1], -item[3]))
+        if not candidates:
+            break
+        target = candidates[0][0]
+        values[target] += 1
+        overflow -= 1
+    return values
+
+
+def _distribute_team_total(team: str, total: int, weekly_created: list[int]) -> list[int]:
+    gates = [_team_gate(team, idx, len(weekly_created)) for idx in range(len(weekly_created))]
+    weights = [weekly_created[idx] * gates[idx][0] for idx in range(len(weekly_created))]
+    caps = [gate[1] for gate in gates]
+    return _distribute_with_caps(total, weights, caps)
+
+
+def _reconcile_weekly_team_totals(
+    rows: list[dict[str, object]],
+    weekly_totals: list[int],
+    row_targets: list[int],
+    warnings: list[ForecastWarning],
+) -> list[dict[str, object]]:
+    out = [{"team": row["team"], "group": row["group"], "values": list(row["values"])} for row in rows]
+
+    def column_total(week_index: int) -> int:
+        return sum(int(row["values"][week_index]) for row in out)  # type: ignore[index]
+
+    guard = 0
+    while guard < 200000:
+        guard += 1
+        deficit_week = next(
+            (week_index for week_index, target_total in enumerate(weekly_totals) if target_total - column_total(week_index) > 0),
+            -1,
+        )
+        if deficit_week < 0:
+            break
+        candidates: list[tuple[int, int, int, int, int]] = []
+        for row_index, row in enumerate(out):
+            weight, cap = _team_gate(str(row["team"]), deficit_week, len(weekly_totals))
+            target_value = int(row["values"][deficit_week])  # type: ignore[index]
+            if weight <= 0 or target_value >= cap:
+                continue
+            for source_week, weekly_total in enumerate(weekly_totals):
+                if source_week == deficit_week:
+                    continue
+                source_value = int(row["values"][source_week])  # type: ignore[index]
+                source_surplus = column_total(source_week) - weekly_total
+                if source_surplus > 0 and source_value > 0:
+                    row_target = row_targets[row_index] if row_index < len(row_targets) else 0
+                    candidates.append((row_index, source_week, source_surplus, source_value, row_target))
+        candidates.sort(key=lambda item: (-item[2], -item[3], -item[4]))
+        if not candidates:
+            break
+        row_index, source_week, _, _, _ = candidates[0]
+        out[row_index]["values"][source_week] -= 1  # type: ignore[index,operator]
+        out[row_index]["values"][deficit_week] += 1  # type: ignore[index,operator]
+
+    for week_index, target_total in enumerate(weekly_totals):
+        current_total = column_total(week_index)
+        if current_total != target_total:
+            warnings.append(
+                ForecastWarning(
+                    type="team_allocation",
+                    severity="warning",
+                    message=f"第 {week_index + 1} 周测试团队启动规则过严，团队提报合计 {current_total} 未能对齐项目提报 {target_total}。",
+                )
+            )
+    return out
+
+
 def _allocate_teams_from_history(
     histories: list[ProjectHistory],
     testing_team_configs: list[object],
@@ -2480,8 +2646,18 @@ def _allocate_teams_from_history(
 
     created_ratios = ratios_for(effective_testing_teams, "createdTeams", testing_team_configs)
     fixed_ratios = ratios_for(dev_teams, "fixedTeams", dev_team_configs)
+    total_created = sum(row.created for row in weekly)
+    created_totals = _round_to_total([total_created * ratio for ratio in created_ratios], total_created)
+    created_rows = [
+        {
+            "team": team,
+            "group": "测试团队",
+            "values": _distribute_team_total(team, created_totals[idx] if idx < len(created_totals) else 0, [row.created for row in weekly]),
+        }
+        for idx, team in enumerate(effective_testing_teams)
+    ]
     return (
-        _split_weekly_by_ratios(effective_testing_teams, [row.created for row in weekly], created_ratios, "测试团队"),
+        _reconcile_weekly_team_totals(created_rows, [row.created for row in weekly], created_totals, warnings),
         _split_weekly_by_ratios(dev_teams, [row.fixed for row in weekly], fixed_ratios, "开发团队"),
         warnings,
     )
@@ -2744,7 +2920,7 @@ def upsert_project_summary(project: ProjectSummary, source: str = "jira") -> Non
                 project.similarity,
                 *metadata_values,
                 normalized_source,
-                datetime.utcnow().isoformat(),
+                _utcnow_iso(),
             ),
         )
 
@@ -2958,7 +3134,7 @@ def jira_sync(req: JiraFetchRequest) -> JiraFetchResult:
 
     fetched = len(issues)
     written = len(touched_labels)
-    synced_at = datetime.utcnow().isoformat()
+    synced_at = _utcnow_iso()
     _record_jira_sync(req, effective_query, fetched, written, synced_at)
     requested_fields_list = list_issue_search_fields(fetch_fields)
     save_jira_fetch_debug(
@@ -2994,7 +3170,7 @@ def jira_sync(req: JiraFetchRequest) -> JiraFetchResult:
 
 def save_forecast_version(project_name: str, input_data: ForecastInput, result: ForecastResult, note: str) -> ForecastVersionRow:
     version_id = str(uuid4())
-    created_at = datetime.utcnow().isoformat()
+    created_at = _utcnow_iso()
     cycle = f"{input_data.params.startWeek}-{input_data.params.endWeek}"
     with get_conn() as conn:
         conn.execute(
@@ -3038,7 +3214,7 @@ def soft_delete_forecast_version(version_id: str) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE forecast_version SET deleted_at = ? WHERE id = ?",
-            (datetime.utcnow().isoformat(), version_id),
+            (_utcnow_iso(), version_id),
         )
 
 
@@ -3154,11 +3330,58 @@ def _save_app_config(key: str, payload: object) -> None:
               value = excluded.value,
               updated_at = excluded.updated_at
             """,
-            (key, json_dumps(payload), datetime.utcnow().isoformat()),
+            (key, json_dumps(payload), _utcnow_iso()),
         )
 
 
+def _sync_team_config_defaults() -> None:
+    default_rows = [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
+    default_by_id = {row.id: row for row in default_rows}
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            """
+            SELECT id, enabled, forecast_ratio
+            FROM team_config
+            """
+        ).fetchall()
+        existing_by_id = {str(row["id"]): row for row in existing_rows}
+        now = _utcnow_iso()
+        for row in default_rows:
+            existing = existing_by_id.get(row.id)
+            enabled = 1 if row.enabled else 0
+            forecast_ratio = row.forecastRatio
+            if existing is not None:
+                enabled = 1 if bool(existing["enabled"]) else 0
+                forecast_ratio = existing["forecast_ratio"]
+            conn.execute(
+                """
+                INSERT INTO team_config(id, name, team_type, enabled, note, forecast_ratio, updated_at)
+                VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  team_type = excluded.team_type,
+                  enabled = excluded.enabled,
+                  note = excluded.note,
+                  forecast_ratio = excluded.forecast_ratio,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    row.id,
+                    row.name,
+                    row.type,
+                    enabled,
+                    row.note,
+                    forecast_ratio,
+                    now,
+                ),
+            )
+        stale_ids = [team_id for team_id in existing_by_id.keys() if team_id not in default_by_id]
+        for team_id in stale_ids:
+            conn.execute("DELETE FROM team_config WHERE id = ?", (team_id,))
+
+
 def list_teams() -> list[TeamConfigRow]:
+    _sync_team_config_defaults()
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -3191,7 +3414,7 @@ def save_teams(rows: list[TeamConfigRow]) -> list[TeamConfigRow]:
     rows_to_save = rows or [*FIXED_TESTING_TEAMS, *FIXED_DEVELOPMENT_TEAMS]
     with get_conn() as conn:
         conn.execute("DELETE FROM team_config")
-        now = datetime.utcnow().isoformat()
+        now = _utcnow_iso()
         for row in rows_to_save:
             conn.execute(
                 """

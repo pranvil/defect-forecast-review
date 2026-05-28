@@ -15,6 +15,7 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   ResponsiveContainer,
@@ -256,17 +257,21 @@ export function ForecastPage() {
       if (actualChartType === 'bar') {
         return <Bar key={key} dataKey={key} name={style.label} fill={style.color} radius={[3, 3, 0, 0]} maxBarSize={28} />
       }
+      const isBacklog = key === 'actualBacklog' || key === 'forecastBacklog'
       return (
         <Line
           key={key}
-          type="monotone"
+          type={isBacklog ? 'linear' : 'monotone'}
           dataKey={key}
           name={style.label}
           stroke={style.color}
           strokeWidth={3}
           strokeDasharray={style.dash}
-          dot={false}
-        />
+          dot={isBacklog ? { r: 4, strokeWidth: 2, fill: '#fff' } : false}
+          activeDot={isBacklog ? { r: 6 } : undefined}
+        >
+          {isBacklog ? <LabelList dataKey={key} position="top" fontSize={11} fill="#334155" /> : null}
+        </Line>
       )
     },
     [actualChartType, actualVisible],

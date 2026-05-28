@@ -4,9 +4,10 @@ import type { ProjectHistory, WeeklyPoint } from '@/types/project'
 import type { TeamItem } from '@/types/team'
 import { compareWeekAsc } from '@/utils/week'
 
-const USER_PROGRAM_TEST_TEAM = 'Hera/Usersupport/APRUUT'
+const USER_PROGRAM_TEST_TEAM = 'IUT'
 
 const FINAL_BACKLOG_RATIO = 0.002
+const EARLY_TEAM_WEEKLY_CAP = 6
 
 type RateMetric = 'testSubmissionRate' | 'devResolutionRate'
 type MilestoneTargetMode = 'currentWeek' | 'previousWeek'
@@ -45,6 +46,35 @@ function cumulative(values: number[]): number[] {
     total += v
     return total
   })
+}
+
+function parseIsoDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function isFixedHoliday(date: Date): boolean {
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  return (month === 5 && day >= 1 && day <= 5) || (month === 10 && day >= 1 && day <= 7)
+}
+
+function workdayRatioForWeek(row: WeeklyPoint): number {
+  const start = parseIsoDate(row.date)
+  if (!start) return 1
+  let workdays = 0
+  for (let offset = 0; offset < 5; offset += 1) {
+    const day = addDays(start, offset)
+    if (!isFixedHoliday(day)) workdays += 1
+  }
+  return workdays <= 0 ? 0.02 : workdays / 5
 }
 
 function findWeekIndex(weekly: WeeklyPoint[], week: string): number {
@@ -110,6 +140,14 @@ function createdLifecycleWeight(index: number, length: number, versionStartIndex
     weight *= Math.max(0.12, 0.38 * (1 - afterVersionRatio))
   }
   return Math.max(0.01, weight)
+}
+
+function fixedLifecycleWeight(index: number, length: number): number {
+  if (length <= 1) return 1
+  const ratio = index / (length - 1)
+  if (ratio < 0.2) return 0.55 + 0.45 * (ratio / 0.2)
+  if (ratio < 0.75) return 1.08
+  return 1.08 + (0.72 - 1.08) * ((ratio - 0.75) / 0.25)
 }
 
 function distributeByCumulativeTargets(
@@ -188,59 +226,6 @@ function inferVersionStartIndex(weekly: WeeklyPoint[], milestones: MilestonePara
   const earliest = versionWeeks.slice().sort(compareWeekAsc)[0]!
   const idx = findWeekIndex(weekly, earliest)
   return idx >= 0 ? idx : weekly.length
-}
-
-function backlogTargetShape(
-  totalCreated: number,
-  length: number,
-  finalBacklog: number,
-  fixedConstraints: Constraint[],
-  createdCum: number[],
-): number[] {
-  if (length <= 0) return []
-  if (length === 1) return [Math.max(0, finalBacklog)]
-  const peakIndex = Math.max(1, Math.min(length - 1, Math.round((length - 1) / 3)))
-  const constraintBacklogs = fixedConstraints.map((constraint) => {
-    const idx = Math.max(0, Math.min(length - 1, constraint.index))
-    return Math.max(0, (createdCum[idx] ?? 0) - (constraint.targetCum ?? 0))
-  })
-  const peakBacklog = Math.max(finalBacklog, Math.round(totalCreated * 0.12), 1, ...constraintBacklogs)
-  const anchors = new Map<number, number>()
-  anchors.set(0, Math.round(peakBacklog * Math.sin((Math.PI / 2) / (peakIndex + 1))))
-  anchors.set(peakIndex, peakBacklog)
-  fixedConstraints.forEach((constraint) => {
-    const idx = Math.max(0, Math.min(length - 1, constraint.index))
-    const requiredBacklog = Math.max(0, (createdCum[idx] ?? 0) - (constraint.targetCum ?? 0))
-    anchors.set(idx, Math.max(anchors.get(idx) ?? 0, requiredBacklog))
-  })
-  anchors.set(length - 1, Math.max(0, finalBacklog))
-  const points = Array.from(anchors.entries())
-    .map(([index, backlog]) => ({ index, backlog }))
-    .sort((a, b) => a.index - b.index)
-  const out = Array.from({ length }, () => Math.max(0, finalBacklog))
-  for (let pointIndex = 0; pointIndex < points.length - 1; pointIndex += 1) {
-    const start = points[pointIndex]!
-    const end = points[pointIndex + 1]!
-    const span = Math.max(1, end.index - start.index)
-    for (let idx = start.index; idx <= end.index; idx += 1) {
-      const ratio = (idx - start.index) / span
-      const smooth = (1 - Math.cos(Math.PI * ratio)) / 2
-      out[idx] = Math.round(start.backlog + (end.backlog - start.backlog) * smooth)
-    }
-  }
-  return out.map((value, idx) => Math.max(0, Math.min(createdCum[idx] ?? value, value)))
-}
-
-function fixedFromBacklogTarget(created: number[], targetBacklog: number[]): number[] {
-  const createdCum = cumulative(created)
-  const desiredCum = created.map((_, idx) => {
-    const target = Math.max(0, targetBacklog[idx] ?? 0)
-    return Math.max(0, Math.min(createdCum[idx] ?? 0, Math.round((createdCum[idx] ?? 0) - target)))
-  })
-  for (let idx = 1; idx < desiredCum.length; idx += 1) {
-    desiredCum[idx] = Math.max(desiredCum[idx] ?? 0, desiredCum[idx - 1] ?? 0)
-  }
-  return desiredCum.map((cum, idx) => cum - (desiredCum[idx - 1] ?? 0))
 }
 
 function cumulativeSlackFrom(created: number[], fixed: number[], startIndex: number): number {
@@ -345,12 +330,13 @@ export function buildForecastWeeklyDistribution(
   const targetMode = options.milestoneTargetMode ?? 'currentWeek'
   const createdConstraints = collectConstraints(baseWeekly, milestones, 'testSubmissionRate', targetMode)
   const versionStartIndex = inferVersionStartIndex(baseWeekly, milestones)
+  const holidayWeights = baseWeekly.map(workdayRatioForWeek)
   const created = smoothCreatedPostPeak(
     distributeByCumulativeTargets(
       total,
       baseWeekly.length,
       createdConstraints,
-      (index) => createdLifecycleWeight(index, baseWeekly.length, versionStartIndex),
+      (index) => createdLifecycleWeight(index, baseWeekly.length, versionStartIndex) * (holidayWeights[index] ?? 1),
     ),
     Math.round((baseWeekly.length - 1) / 3),
   )
@@ -363,8 +349,19 @@ export function buildForecastWeeklyDistribution(
   }))
   const lastFixedConstraint = fixedConstraints.at(-1)
   const finalBacklog = lastFixedConstraint && lastFixedConstraint.rate >= 100 ? 0 : finalBacklogTarget(total)
-  const backlogTarget = backlogTargetShape(total, baseWeekly.length, finalBacklog, fixedConstraintsByCreated, createdCum)
-  const fixedInitial = enforceFixedAvailability(fixedFromBacklogTarget(created, backlogTarget), created)
+  const fixedTargetTotal = Math.max(
+    Math.min(total, total - finalBacklog),
+    fixedConstraintsByCreated.reduce((max, constraint) => Math.max(max, constraint.targetCum ?? 0), 0),
+  )
+  const fixedInitial = enforceFixedAvailability(
+    distributeByCumulativeTargets(
+      fixedTargetTotal,
+      baseWeekly.length,
+      fixedConstraintsByCreated,
+      (index) => fixedLifecycleWeight(index, baseWeekly.length) * (holidayWeights[index] ?? 1),
+    ),
+    created,
+  )
   const enforced = enforceFixedMinimumConstraints(fixedInitial, created, fixedConstraintsByCreated)
   const fixed = enforceFixedAvailability(enforced.fixed, created)
 
@@ -445,6 +442,129 @@ function splitWeeklyByRatios(
   }))
 }
 
+function normalizedTeamName(team: string): string {
+  return team.trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function teamGate(team: string, index: number, length: number): { weight: number; cap: number } {
+  const name = normalizedTeamName(team)
+  const ratio = length <= 1 ? 1 : index / (length - 1)
+  const isProtocol = team.includes('协议测试组') || name.includes('protocol')
+  const isSpecial = team.includes('专项测试组') || name.includes('special')
+  const isIut = name === 'iut' || name.includes('iut')
+  const isGoogleXts = name.includes('googlexts')
+  const isHera = name.includes('hera/usersupport/apruut') || name.includes('hera') || name.includes('apruut')
+
+  if (isGoogleXts && ratio < 1 / 6) return { weight: 0, cap: 0 }
+  if (isHera && ratio < 0.4) return { weight: 0, cap: 0 }
+  if (isIut) {
+    if (ratio < 0.3) return { weight: 0, cap: 0 }
+    if (ratio < 0.5) return { weight: 0.08, cap: EARLY_TEAM_WEEKLY_CAP }
+    return { weight: 1, cap: Number.POSITIVE_INFINITY }
+  }
+  if (isProtocol && ratio < 1 / 6) return { weight: 0.08, cap: EARLY_TEAM_WEEKLY_CAP }
+  if (isSpecial && ratio < 1 / 3) return { weight: 0.08, cap: EARLY_TEAM_WEEKLY_CAP }
+  return { weight: 1, cap: Number.POSITIVE_INFINITY }
+}
+
+function distributeWithCaps(total: number, weights: number[], caps: number[]): number[] {
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0)
+  const values = roundToTotal(weights.map((weight) => (total * weight) / weightTotal), total)
+  let overflow = 0
+  values.forEach((value, index) => {
+    const cap = caps[index] ?? Number.POSITIVE_INFINITY
+    if (value > cap) {
+      overflow += value - cap
+      values[index] = cap
+    }
+  })
+  let guard = 0
+  while (overflow > 0 && guard < 100000) {
+    guard += 1
+    const candidates = values
+      .map((value, index) => ({ index, value, cap: caps[index] ?? Number.POSITIVE_INFINITY, weight: weights[index] ?? 0 }))
+      .filter((item) => item.value < item.cap && item.weight > 0)
+      .sort((a, b) => a.value - b.value || b.weight - a.weight)
+    const target = candidates[0]
+    if (!target) break
+    values[target.index] += 1
+    overflow -= 1
+  }
+  return values
+}
+
+function distributeTeamTotal(team: string, total: number, weeklyCreated: number[]): number[] {
+  const gates = weeklyCreated.map((_, index) => teamGate(team, index, weeklyCreated.length))
+  const weights = weeklyCreated.map((value, index) => value * (gates[index]?.weight ?? 1))
+  const caps = gates.map((gate) => gate.cap)
+  if (weights.reduce((sum, value) => sum + value, 0) <= 0) {
+    return Array.from({ length: weeklyCreated.length }, () => 0)
+  }
+  return distributeWithCaps(total, weights, caps)
+}
+
+function reconcileWeeklyTeamTotals(
+  rows: ForecastTeamRow[],
+  weeklyTotals: number[],
+  rowTargets: number[],
+  warnings: ForecastWarning[],
+): ForecastTeamRow[] {
+  const out = rows.map((row) => ({ ...row, values: row.values.slice() }))
+  const columnTotal = (weekIndex: number) => out.reduce((sum, row) => sum + (row.values[weekIndex] ?? 0), 0)
+  const findWeek = (direction: 'deficit' | 'surplus') =>
+    weeklyTotals.findIndex((targetTotal, weekIndex) => {
+      const diff = targetTotal - columnTotal(weekIndex)
+      return direction === 'deficit' ? diff > 0 : diff < 0
+    })
+  let guard = 0
+  while (guard < 200000) {
+    guard += 1
+    const deficitWeek = findWeek('deficit')
+    if (deficitWeek < 0) break
+    const candidates = out
+      .flatMap((row, rowIndex) =>
+        weeklyTotals.map((_, sourceWeek) => {
+          const gate = teamGate(row.team, deficitWeek, weeklyTotals.length)
+          return {
+            rowIndex,
+            sourceWeek,
+            sourceValue: row.values[sourceWeek] ?? 0,
+            targetValue: row.values[deficitWeek] ?? 0,
+            sourceSurplus: columnTotal(sourceWeek) - weeklyTotals[sourceWeek]!,
+            cap: gate.cap,
+            weight: gate.weight,
+            rowTarget: rowTargets[rowIndex] ?? 0,
+          }
+        }),
+      )
+      .filter(
+        (item) =>
+          item.sourceWeek !== deficitWeek &&
+          item.sourceSurplus > 0 &&
+          item.sourceValue > 0 &&
+          item.weight > 0 &&
+          item.targetValue < item.cap,
+      )
+      .sort((a, b) => b.sourceSurplus - a.sourceSurplus || b.sourceValue - a.sourceValue || b.rowTarget - a.rowTarget)
+    const move = candidates[0]
+    if (!move) break
+    out[move.rowIndex]!.values[move.sourceWeek] = (out[move.rowIndex]!.values[move.sourceWeek] ?? 0) - 1
+    out[move.rowIndex]!.values[deficitWeek] = (out[move.rowIndex]!.values[deficitWeek] ?? 0) + 1
+  }
+
+  weeklyTotals.forEach((targetTotal, weekIndex) => {
+    const currentTotal = columnTotal(weekIndex)
+    if (currentTotal !== targetTotal) {
+      warnings.push({
+        type: 'team_allocation',
+        severity: 'warning',
+        message: `第 ${weekIndex + 1} 周测试团队启动规则过严，团队提报合计 ${currentTotal} 未能对齐项目提报 ${targetTotal}。`,
+      })
+    }
+  })
+  return out
+}
+
 export function allocateTeamsFromHistory(
   histories: ProjectHistory[],
   testingTeamConfigs: TeamItem[],
@@ -491,13 +611,17 @@ export function allocateTeamsFromHistory(
 
   const createdRatios = buildRatios(effectiveTestingTeams, 'createdTeams', testingTeamConfigs)
   const fixedRatios = buildRatios(selectedDevTeams, 'fixedTeams', devTeamConfigs)
+  const createdTotals = roundToTotal(
+    createdRatios.map((ratio) => weekly.reduce((sum, row) => sum + row.created, 0) * ratio),
+    weekly.reduce((sum, row) => sum + row.created, 0),
+  )
+  const createdRows = effectiveTestingTeams.map((team, index) => ({
+    team,
+    group: '测试团队',
+    values: distributeTeamTotal(team, createdTotals[index] ?? 0, weekly.map((row) => row.created)),
+  }))
   return {
-    createdTeams: splitWeeklyByRatios(
-      effectiveTestingTeams,
-      weekly.map((row) => row.created),
-      createdRatios,
-      '测试团队',
-    ),
+    createdTeams: reconcileWeeklyTeamTotals(createdRows, weekly.map((row) => row.created), createdTotals, warnings),
     fixedTeams: splitWeeklyByRatios(
       selectedDevTeams,
       weekly.map((row) => row.fixed),

@@ -56,6 +56,13 @@ def _context_from_fetch(req: JiraFetchRequest) -> JiraRequestContext:
     )
 
 
+def _unverified_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
 def _do_json_request(
     ctx: JiraRequestContext,
     target: str,
@@ -76,7 +83,7 @@ def _do_json_request(
     )
     ssl_context = None
     if not ctx.verify_ssl:
-        ssl_context = ssl._create_unverified_context()
+        ssl_context = _unverified_ssl_context()
     logger.info(
         "jira request, target=%s, timeout=%s, verify_ssl=%s",
         target,
@@ -266,7 +273,7 @@ def test_jira_connection(req: JiraConnectionTestRequest) -> JiraConnectionTestRe
     request = urllib.request.Request(target, headers=headers, method="GET")
     ssl_context = None
     if not req.verifySsl:
-        ssl_context = ssl._create_unverified_context()
+        ssl_context = _unverified_ssl_context()
     logger.info(
         "jira connection test, site=%s, auth_type=%s, timeout=%s, verify_ssl=%s",
         base_url,
