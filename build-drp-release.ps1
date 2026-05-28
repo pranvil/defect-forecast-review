@@ -122,7 +122,9 @@ DRP 本地版使用说明
 数据目录:
 - %USERPROFILE%\.drp
 "@
-Set-Content -Path (Join-Path $bundleDir "README.txt") -Value $readmeText -Encoding UTF8
+$readmePath = Join-Path $bundleDir "README.txt"
+$utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+[System.IO.File]::WriteAllText($readmePath, $readmeText, $utf8WithBom)
 
 Write-Host "[7/7] 生成压缩包..."
 if (-not (Test-Path $bundleDir)) { throw "分发目录不存在: $bundleDir" }

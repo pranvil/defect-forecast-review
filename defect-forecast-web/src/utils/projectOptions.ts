@@ -16,7 +16,7 @@ export const PROJECT_CATEGORY_OPTIONS = [
   '其他',
 ] as const
 
-export const REGION_OPTIONS = ['US', 'CA', 'CN', 'GL', 'All', 'NA OM'] as const
+export const REGION_OPTIONS = ['US', 'CA', 'CN', 'GL', 'NA', 'All', 'NA OM'] as const
 
 export const OS_OPTIONS = ['Android', 'Kaios', 'AOSP', '其他'] as const
 

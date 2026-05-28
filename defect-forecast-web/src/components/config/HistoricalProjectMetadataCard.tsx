@@ -65,6 +65,7 @@ import {
   USER_PROGRAM_OPTIONS,
 } from '@/utils/projectOptions'
 import { useSettingsStore } from '@/stores/settingsStore'
+import type { JiraConnectionConfig } from '@/types/settings'
 import { toBusinessWeekLabel } from '@/utils/week'
 
 const emptyDraft = (): ProjectSummary => ({
@@ -313,7 +314,17 @@ function exportCsv(rows: ProjectSummary[]): string {
     const text = Array.isArray(value) ? value.join(';') : String(value ?? '')
     return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
   }
-  return [headers.join(','), ...rows.map((row) => headers.map((key) => escapeCell(row[key as keyof ProjectSummary])).join(','))].join('\n')
+  return [headers.join(','), ...rows.map((row) => headers.map((key) => escapeCell(row[key as keyof ProjectSummary])).join(','))].join('\r\n')
+}
+
+function validateJiraConnection(config: JiraConnectionConfig): string | null {
+  if (!config.baseUrl.trim()) return '请先在“系统配置”填写 Jira Base URL'
+  if (!config.token.trim()) return '请先在“系统配置”填写 Jira Token / 密码'
+  if (config.authType === 'basic' && !config.username.trim()) return 'Basic Auth 需要先在“系统配置”填写用户名'
+  if (!Number.isFinite(config.timeoutSec) || config.timeoutSec < 3 || config.timeoutSec > 60) {
+    return 'Jira 超时时间需在 3-60 秒之间'
+  }
+  return null
 }
 
 export function HistoricalProjectMetadataCard({
@@ -401,6 +412,14 @@ export function HistoricalProjectMetadataCard({
     }
     if (isSaving) return
 
+    if (!editingName) {
+      const connectionError = validateJiraConnection(jiraConnection)
+      if (connectionError) {
+        toast('Jira 同步失败', { description: connectionError })
+        return
+      }
+    }
+
     const rowsToSave =
       editingName && editingName !== next.name
         ? rows.filter((row) => row.name !== editingName).concat(next)
@@ -454,7 +473,7 @@ export function HistoricalProjectMetadataCard({
   }
 
   const exportCurrentRows = React.useCallback(() => {
-    const blob = new Blob([exportCsv(rows)], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob([`\uFEFF${exportCsv(rows)}`], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -561,6 +580,13 @@ export function HistoricalProjectMetadataCard({
                 const file = e.target.files?.[0]
                 if (!file) return
                 if (isImporting) return
+                const connectionError = validateJiraConnection(jiraConnection)
+                if (connectionError) {
+                  toast('导入失败', { description: connectionError })
+                  e.target.value = ''
+                  return
+                }
+                let batchToastId: string | number | undefined
                 setIsImporting(true)
                 setImportStatus({
                   total: 0,
@@ -656,7 +682,7 @@ export function HistoricalProjectMetadataCard({
                     const failures: string[] = []
                     const skippedProjects: string[] = []
 
-                    const toastId = toast.loading('开始批量同步 Jira', { description: `共 ${imported.length} 行` })
+                    batchToastId = toast.loading('开始批量同步 Jira', { description: `共 ${imported.length} 行` })
 
                     for (let idx = 0; idx < imported.length; idx += 1) {
                       const row = imported[idx]!
@@ -677,7 +703,7 @@ export function HistoricalProjectMetadataCard({
                             : status,
                         )
                         toast.loading(`跳过已存在项目：${key}`, {
-                          id: toastId,
+                          id: batchToastId,
                           description: `${idx + 1} / ${imported.length}`,
                         })
                         continue
@@ -693,7 +719,7 @@ export function HistoricalProjectMetadataCard({
                           : status,
                       )
                       toast.loading(`正在同步 Jira：${key}`, {
-                        id: toastId,
+                        id: batchToastId,
                         description: `${idx + 1} / ${imported.length}`,
                       })
                       if (row.validStartDate?.trim() && row.validEndDate?.trim() && row.validStartDate > row.validEndDate) {
@@ -779,8 +805,8 @@ export function HistoricalProjectMetadataCard({
                     await refresh()
 
                     if (failures.length) {
-                      toast('批量导入完成（有失败）', {
-                        id: toastId,
+                      if (batchToastId !== undefined) toast.dismiss(batchToastId)
+                      toast.warning('批量导入完成（有失败）', {
                         description: `成功 ${processed.length} / 失败 ${failures.length} / 跳过 ${skippedProjects.length}；示例：${failures[0]}`,
                       })
                       setImportStatus((status) =>
@@ -795,8 +821,8 @@ export function HistoricalProjectMetadataCard({
                           : status,
                       )
                     } else {
-                      toast('已导入历史项目元数据', {
-                        id: toastId,
+                      if (batchToastId !== undefined) toast.dismiss(batchToastId)
+                      toast.success('已导入历史项目元数据', {
                         description: `成功 ${processed.length} / 失败 0 / 跳过 ${skippedProjects.length}`,
                       })
                       setImportStatus((status) =>
@@ -813,6 +839,7 @@ export function HistoricalProjectMetadataCard({
                     }
                   })
                   .catch((err: unknown) => {
+                    if (batchToastId !== undefined) toast.dismiss(batchToastId)
                     toast('导入失败', { description: err instanceof Error ? err.message : '文件解析失败' })
                     setImportStatus((status) =>
                       status

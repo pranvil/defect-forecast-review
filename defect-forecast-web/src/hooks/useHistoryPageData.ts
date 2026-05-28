@@ -891,8 +891,8 @@ export function useHistoryPageData() {
         PROJECT_METADATA_COLUMNS.map((column) => formatProjectMetadataCell(p, column.id).replaceAll(',', '，')),
       ),
     ]
-    const content = csvRows.map((x) => x.join(',')).join('\n')
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+    const content = csvRows.map((x) => x.join(',')).join('\r\n')
+    const blob = new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
